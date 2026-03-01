@@ -21,9 +21,17 @@ def main() -> None:
         except (json.JSONDecodeError, IOError) as e:
             print(f"Warning: Could not load existing data: {e}", file=sys.stderr)
     
-    # Add User-Agent to avoid being blocked
+    # Add headers to avoid being blocked by WAF/Cloudflare
     res = subprocess.run(
-        ["curl", "-s", "--max-time", "30", "-A", "Mozilla/5.0", URL],
+        [
+            "curl", "-s", "--max-time", "30",
+            "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+            "-H", "Accept: application/json, text/plain, */*",
+            "-H", "Accept-Language: he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7",
+            "-H", "Referer: https://www.oref.org.il/",
+            "-H", "Origin: https://www.oref.org.il",
+            URL
+        ],
         capture_output=True,
         text=True,
         check=False,

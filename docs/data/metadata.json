@@ -1,7 +1,6 @@
 {
   "source": "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json",
-  "updated_at_utc": "2026-03-01T20:58:41.222685+00:00",
-  "total_records": 34286,
-  "merged_from_commits": 2,
-  "note": "Merged historical data from all git commits"
+  "updated_at_utc": "2026-03-01T21:45:32.910941+00:00",
+  "total_records": 34973,
+  "new_records_added": 687
 }
