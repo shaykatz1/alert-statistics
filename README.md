@@ -1,74 +1,55 @@
-# אתר ניתוח התרעות - פיקוד העורף 🚨
+# Home Front Command Alert Analysis
 
-אתר סטטי לניתוח התרעות מפיקוד העורף, מתארח ב-GitHub Pages.
+Tool for analyzing and visualizing alerts from Israel's Home Front Command for the past week.
 
-## 🌐 צפייה באתר
-האתר זמין בכתובת: `https://YOUR_USERNAME.github.io/YOUR_REPO_NAME/`
+## What's Included?
 
-(החלף `YOUR_USERNAME` ו-`YOUR_REPO_NAME` בערכים המתאימים)
+The project includes 3 versions of the same tool:
 
-## 📊 יכולות
-- ניתוח נתונים משבוע אחרון של התרעות
-- סוגי התרעות: שיגורים, כניסה/יציאה ממרחב מוגן, חדירת כלי טיס
-- סינון לפי טווח תאריכים, שעות, ויישובים
-- חישוב זמן שהייה במרחב מוגן
-- גרפים אינטראקטיביים לפי שעות היום
-- השוואה בין יישובים
-- יצוא נתונים ל-CSV
+1. **Static Site** (docs/) - For publishing on GitHub Pages
+2. **Streamlit App** (app.py) - Fast interactive interface
+3. **Flask Server** (server.py) - Full API with web interface
 
-## 🚀 הגדרת GitHub Pages
+All versions display the same data with similar capabilities:
+- Alert analysis: missile launches, shelter entry/exit, aircraft intrusion
+- Filtering by date range, hours, and settlements
+- Calculation of time spent in shelter
+- Hourly charts and settlement comparisons
+- CSV export
 
-### 1. העלאה ל-GitHub
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO_NAME.git
-git push -u origin main
-```
+## How to Run?
 
-### 2. הפעלת GitHub Pages
-1. עבור להגדרות הרפוזיטורי (Settings)
-2. לחץ על **Pages** בתפריט הצד
-3. תחת **Source**, בחר **Deploy from a branch**
-4. תחת **Branch**, בחר `main` ו-`/docs` ולחץ Save
-5. האתר יהיה זמין תוך מספר דקות
-
-### 3. עדכון אוטומטי של הנתונים
-הנתונים מתעדכנים אוטומטית כל שעתיים באמצעות GitHub Actions.
-לעדכון ידני:
-1. עבור ל-Actions בגיטהאב
-2. בחר את ה-workflow "Update Alert Data"
-3. לחץ על "Run workflow"
-
-## 🔧 פיתוח מקומי
-
-### הרצת שרת מקומי
+### Static Site (recommended for quick viewing)
 ```bash
 cd docs
 python3 -m http.server 8000
 ```
-ואז פתח: `http://localhost:8000`
+Open browser: `http://localhost:8000`
 
-### עדכון נתונים מקומי
+**Update data:**
 ```bash
 python3 scripts/fetch_alerts_snapshot.py
 ```
 
-## 📁 מבנה הפרויקט
-```
-├── docs/               # קבצי GitHub Pages
-│   ├── index.html     # עמוד ראשי
-│   ├── app.js         # לוגיקת האפליקציה
-│   ├── styles.css     # עיצוב
-│   └── data/          # נתוני התרעות (מתעדכן אוטומטית)
-├── scripts/           # סקריפטים לעדכון נתונים
-└── .github/workflows/ # אוטומציה של GitHub Actions
+### Streamlit App
+```bash
+pip install -r requirements.txt
+streamlit run app.py
 ```
 
-## 📝 מקור נתונים
-`https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json`
+### Flask Server
+```bash
+pip install -r requirements.txt
+python server.py
+```
+Open browser: `http://localhost:8000`
 
-## ⚙️ עקרון ספירה
-כאשר בוחרים כמה יישובים יחד, אירוע שמופיע באותה שנייה ובאותה כותרת בכמה יישובים נספר כאירוע ייחודי אחד (דה-דופליקציה).
+## How Does It Work?
+
+**Data Source:** `https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json`
+
+**Data Updates:**
+- **Static Site** - Works with local snapshot, must be updated manually or configure GitHub Actions to update every 2 hours
+- **Streamlit + Flask** - Pull data live from Home Front Command (60 second cache)
+
+**Event Counting:** Events that appear in the same second with the same title across multiple settlements are counted only once.
