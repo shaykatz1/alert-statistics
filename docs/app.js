@@ -51,7 +51,10 @@ function fillSelect(selectEl, values, placeholder) {
 function setupAutocomplete(inputEl, values) {
   const dropdownId = inputEl.id + "-dropdown";
   const dropdown = $(dropdownId);
-  if (!dropdown) return;
+  if (!dropdown) {
+    console.error("Dropdown not found for", inputEl.id);
+    return;
+  }
 
   let allValues = [...values].sort();
   let selectedIndex = -1;
@@ -69,10 +72,18 @@ function setupAutocomplete(inputEl, values) {
   }
 
   function filterAndShow() {
-    const query = inputEl.value.trim().toLowerCase();
-    const filtered = query
-      ? allValues.filter((v) => v.toLowerCase().includes(query))
-      : allValues.slice(0, 100); // Show first 100 when empty
+    const query = inputEl.value.trim();
+    const queryLower = query.toLowerCase();
+    
+    // Filter: prioritize starts-with, then includes
+    let filtered;
+    if (query) {
+      const startsWith = allValues.filter((v) => v.toLowerCase().startsWith(queryLower));
+      const contains = allValues.filter((v) => !v.toLowerCase().startsWith(queryLower) && v.toLowerCase().includes(queryLower));
+      filtered = [...startsWith, ...contains];
+    } else {
+      filtered = allValues.slice(0, 100); // Show first 100 when empty
+    }
 
     dropdown.innerHTML = "";
     
@@ -86,7 +97,7 @@ function setupAutocomplete(inputEl, values) {
     itemsToShow.forEach((val, idx) => {
       const item = document.createElement("div");
       item.className = "autocomplete-item";
-      item.innerHTML = highlightMatch(val, inputEl.value.trim());
+      item.innerHTML = highlightMatch(val, query);
       item.dataset.value = val;
       if (idx === selectedIndex) item.classList.add("highlighted");
       
