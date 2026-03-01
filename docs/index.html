@@ -13,8 +13,8 @@
 <body>
   <main class="container">
     <section class="hero">
-      <h1>ניתוח התרעות מהשבוע האחרון</h1>
-      <p>גרסה סטטית ל-GitHub Pages. הנתונים מגיעים מקובץ snapshot.</p>
+      <h1>ניתוח התרעות</h1>
+      <p>ניתוח נתוני התרעות מפיקוד העורף</p>
     </section>
 
     <section class="card">
@@ -33,7 +33,10 @@
 
         <div>
           <label>יישוב (פילטר יחיד)</label>
-          <select id="settlementSelect"></select>
+          <div class="autocomplete-wrapper">
+            <input type="text" id="settlementSelect" placeholder="הקלד לחיפוש..." autocomplete="off" />
+            <div class="autocomplete-dropdown" id="settlementSelect-dropdown"></div>
+          </div>
         </div>
 
         <div>
@@ -115,8 +118,20 @@
       <div class="card" style="margin-top:18px;">
         <h3 style="margin-top:0;">השוואה בין 2 יישובים</h3>
         <div class="controls" style="grid-template-columns: 1fr 1fr auto;">
-          <div><label>יישוב א'</label><select id="compareSettlementA"></select></div>
-          <div><label>יישוב ב'</label><select id="compareSettlementB"></select></div>
+          <div>
+            <label>יישוב א'</label>
+            <div class="autocomplete-wrapper">
+              <input type="text" id="compareSettlementA" placeholder="הקלד לחיפוש..." autocomplete="off" />
+              <div class="autocomplete-dropdown" id="compareSettlementA-dropdown"></div>
+            </div>
+          </div>
+          <div>
+            <label>יישוב ב'</label>
+            <div class="autocomplete-wrapper">
+              <input type="text" id="compareSettlementB" placeholder="הקלד לחיפוש..." autocomplete="off" />
+              <div class="autocomplete-dropdown" id="compareSettlementB-dropdown"></div>
+            </div>
+          </div>
           <button id="compareBtn">בצע השוואה</button>
         </div>
 

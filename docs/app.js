@@ -36,7 +36,6 @@ function toCsv(rows) {
 }
 
 function fillSelect(selectEl, values, placeholder) {
-  selectEl.innerHTML = "";
   const first = document.createElement("option");
   first.value = "";
   first.textContent = placeholder;
@@ -47,6 +46,120 @@ function fillSelect(selectEl, values, placeholder) {
     opt.textContent = v;
     selectEl.appendChild(opt);
   });
+}
+
+function setupAutocomplete(inputEl, values) {
+  const dropdownId = inputEl.id + "-dropdown";
+  const dropdown = $(dropdownId);
+  if (!dropdown) return;
+
+  let allValues = [...values].sort();
+  let selectedIndex = -1;
+
+  // Store the selected value
+  inputEl.dataset.selectedValue = "";
+
+  function filterAndShow() {
+    const query = inputEl.value.trim().toLowerCase();
+    const filtered = query
+      ? allValues.filter((v) => v.toLowerCase().includes(query))
+      : allValues;
+
+    dropdown.innerHTML = "";
+    
+    if (filtered.length === 0) {
+      dropdown.innerHTML = '<div class="autocomplete-empty">לא נמצאו תוצאות</div>';
+      dropdown.classList.add("show");
+      return;
+    }
+
+    filtered.forEach((val, idx) => {
+      const item = document.createElement("div");
+      item.className = "autocomplete-item";
+      item.textContent = val;
+      item.dataset.value = val;
+      if (idx === selectedIndex) item.classList.add("highlighted");
+      
+      item.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        selectItem(val);
+      });
+      
+      dropdown.appendChild(item);
+    });
+
+    dropdown.classList.add("show");
+    selectedIndex = -1;
+  }
+
+  function selectItem(value) {
+    inputEl.value = value;
+    inputEl.dataset.selectedValue = value;
+    dropdown.classList.remove("show");
+    selectedIndex = -1;
+  }
+
+  function hideDropdown() {
+    setTimeout(() => {
+      dropdown.classList.remove("show");
+      selectedIndex = -1;
+    }, 150);
+  }
+
+  inputEl.addEventListener("input", () => {
+    inputEl.dataset.selectedValue = "";
+    filterAndShow();
+  });
+
+  inputEl.addEventListener("focus", () => {
+    filterAndShow();
+  });
+
+  inputEl.addEventListener("blur", hideDropdown);
+
+  inputEl.addEventListener("keydown", (e) => {
+    const items = dropdown.querySelectorAll(".autocomplete-item");
+    
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (items.length > 0) {
+        selectedIndex = Math.min(selectedIndex + 1, items.length - 1);
+        items.forEach((item, idx) => {
+          item.classList.toggle("highlighted", idx === selectedIndex);
+        });
+        items[selectedIndex]?.scrollIntoView({ block: "nearest" });
+      }
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (items.length > 0) {
+        selectedIndex = Math.max(selectedIndex - 1, 0);
+        items.forEach((item, idx) => {
+          item.classList.toggle("highlighted", idx === selectedIndex);
+        });
+        items[selectedIndex]?.scrollIntoView({ block: "nearest" });
+      }
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (selectedIndex >= 0 && items[selectedIndex]) {
+        selectItem(items[selectedIndex].dataset.value);
+      } else if (items.length === 1) {
+        selectItem(items[0].dataset.value);
+      }
+    } else if (e.key === "Escape") {
+      dropdown.classList.remove("show");
+      selectedIndex = -1;
+    }
+  });
+
+  // Helper to get the selected value
+  inputEl.getSelectedValue = function() {
+    return this.dataset.selectedValue || "";
+  };
+
+  // Helper to set values
+  inputEl.setValues = function(newValues) {
+    allValues = [...newValues].sort();
+  };
 }
 
 function selectedValues(selectEl) {
@@ -406,9 +519,9 @@ function runDashboard() {
   const availableSettlements = Array.from(new Set(prepared.map((r) => r.settlement))).filter(Boolean).sort();
 
   if (!$("settlementSelect").dataset.filled) {
-    fillSelect($("settlementSelect"), availableSettlements, "כל היישובים");
-    fillSelect($("compareSettlementA"), availableSettlements, "בחר יישוב א'");
-    fillSelect($("compareSettlementB"), availableSettlements, "בחר יישוב ב'");
+    setupAutocomplete($("settlementSelect"), availableSettlements);
+    setupAutocomplete($("compareSettlementA"), availableSettlements);
+    setupAutocomplete($("compareSettlementB"), availableSettlements);
     const dates = Array.from(new Set(prepared.map((r) => r.date))).sort();
     if (dates.length) {
       $("startDate").value = dates[0];
@@ -427,7 +540,7 @@ function runDashboard() {
   let afterDuration = baseFiltered.filter((r) => allowedSettlements.has(r.settlement));
   let staysAfterDuration = stays.filter((s) => allowedSettlements.has(s.settlement));
 
-  const selectedSettlement = $("settlementSelect").value;
+  const selectedSettlement = $("settlementSelect").getSelectedValue ? $("settlementSelect").getSelectedValue() : $("settlementSelect").value;
   if (selectedSettlement) {
     afterDuration = afterDuration.filter((r) => r.settlement === selectedSettlement);
     staysAfterDuration = staysAfterDuration.filter((s) => s.settlement === selectedSettlement);
@@ -447,8 +560,8 @@ function runDashboard() {
   const statsSettlement = selectedSettlement || null;
   const selectedStats = getSettlementStats(shelterSummary, stays, statsSettlement);
 
-  const compareA = $("compareSettlementA").value;
-  const compareB = $("compareSettlementB").value;
+  const compareA = $("compareSettlementA").getSelectedValue ? $("compareSettlementA").getSelectedValue() : $("compareSettlementA").value;
+  const compareB = $("compareSettlementB").getSelectedValue ? $("compareSettlementB").getSelectedValue() : $("compareSettlementB").value;
   const pairRows = baseFiltered.filter((r) => r.settlement === compareA || r.settlement === compareB);
   const pairStays = stays.filter((s) => s.settlement === compareA || s.settlement === compareB);
   const pairLaunchUnique = uniqueEvents(pairRows.filter((r) => r.alert_type === "launch"));

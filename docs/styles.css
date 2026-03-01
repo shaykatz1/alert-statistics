@@ -25,6 +25,15 @@ body {
 #customRange label, #shelterFilter label { display: block; font-size: .9rem; color: var(--muted); }
 select, input, button { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px; font-size: .95rem; }
 button { background: var(--accent); color: #fff; border: 0; font-weight: 700; cursor: pointer; }
+.autocomplete-wrapper { position: relative; width: 100%; }
+.autocomplete-wrapper input { padding-left: 36px; background: var(--surface) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="%234e6a5c" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>') no-repeat 10px center; }
+.autocomplete-dropdown { position: absolute; top: 100%; left: 0; right: 0; max-height: 300px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin-top: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); display: none; z-index: 1000; }
+.autocomplete-dropdown.show { display: block; }
+.autocomplete-item { padding: 10px 12px; cursor: pointer; transition: background 0.15s; border-bottom: 1px solid #f0f0f0; }
+.autocomplete-item:last-child { border-bottom: none; }
+.autocomplete-item:hover, .autocomplete-item.selected { background: var(--accent-2); }
+.autocomplete-item.highlighted { background: #cae8d5; font-weight: 600; }
+.autocomplete-empty { padding: 10px 12px; color: var(--muted); font-size: .9rem; text-align: center; }
 .metrics { margin-top: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .metric { background: var(--accent-2); border-radius: 12px; padding: 12px; }
 .metric .label { color: var(--muted); font-size: .88rem; }
