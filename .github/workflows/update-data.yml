@@ -1,0 +1,57 @@
+name: Update Alert Data
+
+on:
+  schedule:
+    # Run every hour to catch new alerts quickly
+    - cron: '0 * * * *'
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for complete context
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies (if needed)
+        run: |
+          # No external dependencies needed for fetch_alerts_snapshot.py
+          echo "No dependencies to install"
+      
+      - name: Fetch latest alert data
+        run: |
+          python3 scripts/fetch_alerts_snapshot.py
+      
+      - name: Check for changes
+        id: check_changes
+        run: |
+          git diff --quiet docs/data/ || echo "changed=true" >> $GITHUB_OUTPUT
+      
+      - name: Commit and push if changed
+        if: steps.check_changes.outputs.changed == 'true'
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'actions@github.com'
+          git add docs/data/
+          git commit -m "🔄 Update alert data [automated]
+          
+          - Fetched latest alerts from Pikud HaOref API
+          - Updated at: $(date -u +"%Y-%m-%d %H:%M:%S UTC")"
+          git push
+      
+      - name: No changes
+        if: steps.check_changes.outputs.changed != 'true'
+        run: |
+          echo "ℹ️  No new alert data to commit"
