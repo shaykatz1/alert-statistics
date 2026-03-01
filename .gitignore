@@ -4,3 +4,5 @@ __pycache__/
 .DS_Store
 logs/
 scripts/update_and_push.sh
+scripts/setup_cron.sh
+scripts/crontab_entry.txt
