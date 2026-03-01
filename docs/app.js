@@ -59,11 +59,20 @@ function setupAutocomplete(inputEl, values) {
   // Store the selected value
   inputEl.dataset.selectedValue = "";
 
+  function highlightMatch(text, query) {
+    if (!query) return text;
+    const index = text.toLowerCase().indexOf(query.toLowerCase());
+    if (index === -1) return text;
+    return text.substring(0, index) +
+           '<strong>' + text.substring(index, index + query.length) + '</strong>' +
+           text.substring(index + query.length);
+  }
+
   function filterAndShow() {
     const query = inputEl.value.trim().toLowerCase();
     const filtered = query
       ? allValues.filter((v) => v.toLowerCase().includes(query))
-      : allValues;
+      : allValues.slice(0, 100); // Show first 100 when empty
 
     dropdown.innerHTML = "";
     
@@ -73,10 +82,11 @@ function setupAutocomplete(inputEl, values) {
       return;
     }
 
-    filtered.forEach((val, idx) => {
+    const itemsToShow = filtered.slice(0, 100); // Limit display for performance
+    itemsToShow.forEach((val, idx) => {
       const item = document.createElement("div");
       item.className = "autocomplete-item";
-      item.textContent = val;
+      item.innerHTML = highlightMatch(val, inputEl.value.trim());
       item.dataset.value = val;
       if (idx === selectedIndex) item.classList.add("highlighted");
       
@@ -87,6 +97,13 @@ function setupAutocomplete(inputEl, values) {
       
       dropdown.appendChild(item);
     });
+
+    if (filtered.length > 100) {
+      const more = document.createElement("div");
+      more.className = "autocomplete-empty";
+      more.textContent = `+ ${filtered.length - 100} תוצאות נוספות - המשך להקליד`;
+      dropdown.appendChild(more);
+    }
 
     dropdown.classList.add("show");
     selectedIndex = -1;

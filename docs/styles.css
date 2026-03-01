@@ -33,6 +33,7 @@ button { background: var(--accent); color: #fff; border: 0; font-weight: 700; cu
 .autocomplete-item:last-child { border-bottom: none; }
 .autocomplete-item:hover, .autocomplete-item.selected { background: var(--accent-2); }
 .autocomplete-item.highlighted { background: #cae8d5; font-weight: 600; }
+.autocomplete-item strong { color: var(--accent); font-weight: 700; }
 .autocomplete-empty { padding: 10px 12px; color: var(--muted); font-size: .9rem; text-align: center; }
 .metrics { margin-top: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 .metric { background: var(--accent-2); border-radius: 12px; padding: 12px; }
