@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 .DS_Store
+logs/
+scripts/update_and_push.sh

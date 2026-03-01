@@ -12,6 +12,15 @@ META = Path("docs/data/metadata.json")
 
 
 def main() -> None:
+    # Load existing data if available
+    existing_data = []
+    if OUT.exists():
+        try:
+            existing_data = json.loads(OUT.read_text(encoding="utf-8"))
+            print(f"Loaded {len(existing_data)} existing records")
+        except (json.JSONDecodeError, IOError) as e:
+            print(f"Warning: Could not load existing data: {e}", file=sys.stderr)
+    
     # Add User-Agent to avoid being blocked
     res = subprocess.run(
         ["curl", "-s", "--max-time", "30", "-A", "Mozilla/5.0", URL],
@@ -33,7 +42,7 @@ def main() -> None:
     
     # Try to parse JSON with better error handling
     try:
-        data = json.loads(payload)
+        new_data = json.loads(payload)
     except json.JSONDecodeError as e:
         print(f"Error: Invalid JSON response from API", file=sys.stderr)
         print(f"Response preview: {payload[:200]}", file=sys.stderr)
@@ -41,19 +50,49 @@ def main() -> None:
         raise SystemExit(1)
     
     # Ensure we got a list
-    if not isinstance(data, list):
-        print(f"Error: Expected list, got {type(data).__name__}", file=sys.stderr)
+    if not isinstance(new_data, list):
+        print(f"Error: Expected list, got {type(new_data).__name__}", file=sys.stderr)
         raise SystemExit(1)
     
-    # Write the data
+    print(f"Fetched {len(new_data)} new records from API")
+    
+    # Merge data: create a set of tuples for deduplication
+    # We use all fields as the unique key
+    seen = set()
+    merged_data = []
+    
+    for record in existing_data + new_data:
+        # Create a unique key from all fields
+        key = (
+            record.get("alertDate"),
+            record.get("title"),
+            record.get("data"),
+            record.get("category")
+        )
+        if key not in seen:
+            seen.add(key)
+            merged_data.append(record)
+    
+    # Sort by alertDate (most recent first)
+    merged_data.sort(key=lambda x: x.get("alertDate", ""), reverse=True)
+    
+    print(f"Total unique records after merge: {len(merged_data)}")
+    print(f"New records added: {len(merged_data) - len(existing_data)}")
+    
+    # Write the merged data
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    OUT.write_text(json.dumps(merged_data, ensure_ascii=False, indent=0), encoding="utf-8")
     META.write_text(
-        json.dumps({"source": URL, "updated_at_utc": datetime.now(timezone.utc).isoformat()}),
+        json.dumps({
+            "source": URL,
+            "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "total_records": len(merged_data),
+            "new_records_added": len(merged_data) - len(existing_data)
+        }, indent=2),
         encoding="utf-8",
     )
     
-    print(f"Successfully fetched {len(data)} alert records")
+    print(f"Successfully updated alerts history")
 
 
 if __name__ == "__main__":
