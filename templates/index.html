@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ניתוח התרעות - פיקוד העורף</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <main class="container">
+    <section class="hero">
+      <h1>ניתוח התרעות מהשבוע האחרון</h1>
+      <p>ספירה ייחודית של אירועים (ללא כפילויות בין יישובים באותה שנייה), כולל חישוב זמן במרחב מוגן.</p>
+    </section>
+
+    <section class="card">
+      <div class="controls">
+        <div>
+          <label>מצב טווח</label>
+          <select id="rangeMode">
+            <option value="week" selected>כל השבוע</option>
+            <option value="last_1d">ביממה האחרונה</option>
+            <option value="last_2d">ביומיים האחרונים</option>
+            <option value="last_3d">בשלושה ימים האחרונים</option>
+            <option value="last_4d">ב-4 ימים האחרונים</option>
+            <option value="custom">תאריכים + שעות</option>
+          </select>
+        </div>
+
+        <div>
+          <label>יישוב (פילטר יחיד)</label>
+          <select id="settlementSelect"></select>
+        </div>
+
+        <div>
+          <label>סוגי התרעות</label>
+          <select id="typeSelect" multiple>
+            <option value="launch" selected>שיגורים</option>
+            <option value="shelter_enter" selected>כניסה למרחב מוגן</option>
+            <option value="shelter_exit" selected>יציאה ממרחב מוגן</option>
+            <option value="aircraft" selected>חדירת כלי טיס</option>
+          </select>
+        </div>
+
+        <div id="customRange" style="display:none;">
+          <label>מתאריך <input id="startDate" type="date" /></label>
+          <label>עד תאריך <input id="endDate" type="date" /></label>
+          <label>משעה <input id="hourFrom" type="number" min="0" max="23" value="0" /></label>
+          <label>עד שעה <input id="hourTo" type="number" min="0" max="23" value="23" /></label>
+        </div>
+
+        <div id="shelterFilter">
+          <label>מינימום דקות במרחב מוגן <input id="minShelterMinutes" type="number" min="0" value="0" /></label>
+          <label>מקסימום דקות (אופציונלי) <input id="maxShelterMinutes" type="number" min="0" placeholder="ללא הגבלה" /></label>
+        </div>
+
+        <button id="applyBtn">החל סינון</button>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><div class="label">כמה שיגורים</div><div class="value" id="mLaunch">-</div></div>
+        <div class="metric"><div class="label">כמה התראות כניסה</div><div class="value" id="mEnter">-</div></div>
+        <div class="metric"><div class="label">כמה התראות יציאה</div><div class="value" id="mExit">-</div></div>
+        <div class="metric"><div class="label">כמה התראות כלי טיס</div><div class="value" id="mAircraft">-</div></div>
+      </div>
+
+      <div class="metrics">
+        <div class="metric"><div class="label">סה"כ זמן במרחב מוגן (HH:MM)</div><div class="value" id="sTotalShelter">-</div></div>
+        <div class="metric"><div class="label">זמן ממוצע לכל שהייה (HH:MM)</div><div class="value" id="sAvgStay">-</div></div>
+        <div class="metric"><div class="label">מספר שהיות במרחב מוגן</div><div class="value" id="sStayCount">-</div></div>
+        <div class="metric">
+          <div class="label">השהייה הארוכה ביותר (HH:MM)</div>
+          <div class="value" id="sLongestStay">-</div>
+          <div class="sub" id="sLongestStayWhen">-</div>
+        </div>
+      </div>
+
+      <div class="charts">
+        <div class="card">
+          <h3 style="margin-top:0;">שיגורים לפי שעה (מצטבר על פני הטווח)</h3>
+          <canvas id="settlementsChart"></canvas>
+        </div>
+        <div class="card">
+          <h3 style="margin-top:0;">זמן שהיה במרחב מוגן לפי שעה (בדקות)</h3>
+          <canvas id="shelterByHourChart"></canvas>
+        </div>
+      </div>
+
+      <div class="charts">
+        <div class="card">
+          <h3 style="margin-top:0;">כלי טיס לפי שעה (מצטבר על פני הטווח)</h3>
+          <canvas id="threatsByHourChart"></canvas>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <small id="sourceText"></small>
+        <a id="csvLink" href="#">הורדת CSV</a>
+      </div>
+
+      <details class="card" style="margin-top:12px;">
+        <summary style="cursor:pointer;font-weight:700;">הצג רשימת נתונים</summary>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>תאריך ושעה</th>
+                <th>סוג התרעה</th>
+                <th>כותרת</th>
+                <th>קטגוריה</th>
+                <th>מס' יישובים באירוע</th>
+                <th>יישובים (דגימה)</th>
+              </tr>
+            </thead>
+            <tbody id="rowsBody"></tbody>
+          </table>
+        </div>
+      </details>
+
+      <div class="card" style="margin-top:18px;">
+        <h3 style="margin-top:0;">השוואה בין 2 יישובים</h3>
+        <div class="controls" style="grid-template-columns: 1fr 1fr auto;">
+          <div>
+            <label>יישוב א'</label>
+            <select id="compareSettlementA"></select>
+          </div>
+          <div>
+            <label>יישוב ב'</label>
+            <select id="compareSettlementB"></select>
+          </div>
+          <button id="compareBtn">בצע השוואה</button>
+        </div>
+        <div class="charts">
+          <div class="card">
+            <h3 style="margin-top:0;">כמות שיגורים כוללת ב-2 היישובים</h3>
+            <canvas id="compareTwoLaunchTotalsChart"></canvas>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0;">זמן שהיה כולל ב-2 היישובים (בדקות)</h3>
+            <canvas id="compareTwoShelterTotalsChart"></canvas>
+          </div>
+        </div>
+        <div class="charts">
+          <div class="card">
+            <h3 style="margin-top:0;">שיגורים לפי שעה לכל אחד מ-2 היישובים</h3>
+            <canvas id="compareTwoHourlyLaunchesChart"></canvas>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0;">זמן שהיה לפי שעה לכל אחד מ-2 היישובים (בדקות)</h3>
+            <canvas id="compareTwoHourlyShelterChart"></canvas>
+          </div>
+        </div>
+        <div class="charts">
+          <div class="card">
+            <h3 style="margin-top:0;">סטטיסטיקה ליישוב א'</h3>
+            <div id="compareStatsA">לא נבחר יישוב</div>
+          </div>
+          <div class="card">
+            <h3 style="margin-top:0;">סטטיסטיקה ליישוב ב'</h3>
+            <div id="compareStatsB">לא נבחר יישוב</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
