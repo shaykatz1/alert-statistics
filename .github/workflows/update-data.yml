@@ -1,0 +1,41 @@
+name: Update Alert Data
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Allow manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Fetch latest alert data
+        run: |
+          python3 scripts/fetch_alerts_snapshot.py
+      
+      - name: Commit and push if changed
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git add docs/data/alerts_history.json docs/data/metadata.json
+          if ! git diff --staged --quiet; then
+            git commit -m "🔄 Update alert data [automated]"
+            git push
+          else
+            echo "No changes to commit"
+          fi
