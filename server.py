@@ -22,6 +22,13 @@ CACHE_SECONDS = 60
 def classify_alert(title: str, category: int) -> str:
     title = title or ""
 
+    # Check for event end FIRST (before checking event type)
+    if category == 13 or "ניתן לצאת" in title or "האירוע הסתיים" in title or "החשש הוסר" in title:
+        return "shelter_exit"
+
+    if category == 14 or "בדקות הקרובות צפויות להתקבל התרעות" in title or "היכנסו" in title or "להיכנס" in title:
+        return "shelter_enter"
+
     if category == MISSILE_CATEGORY or MISSILE_TITLE in title:
         return "launch"
 
@@ -30,12 +37,6 @@ def classify_alert(title: str, category: int) -> str:
 
     if category == 10 or "חדירת מחבלים" in title:
         return "infiltration"
-
-    if category == 14 or "בדקות הקרובות צפויות להתקבל התרעות" in title or "היכנסו" in title or "להיכנס" in title:
-        return "shelter_enter"
-
-    if category == 13 or "ניתן לצאת" in title or "האירוע הסתיים" in title or "החשש הוסר" in title:
-        return "shelter_exit"
 
     return "other"
 

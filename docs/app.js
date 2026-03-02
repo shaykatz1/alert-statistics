@@ -21,11 +21,12 @@ function typeLabel(t) {
 
 function classifyAlert(title, category) {
   const t = title || "";
+  // Check for event end FIRST (before checking event type)
+  if (category === 13 || t.includes("ניתן לצאת") || t.includes("האירוע הסתיים") || t.includes("החשש הוסר")) return "shelter_exit";
+  if (category === 14 || t.includes("בדקות הקרובות צפויות להתקבל התרעות") || t.includes("היכנסו") || t.includes("להיכנס")) return "shelter_enter";
   if (category === 1 || t.includes("ירי רקטות וטילים")) return "launch";
   if (category === 2 || t.includes("חדירת כלי טיס עוין") || t.includes("כלי טיס עוין")) return "aircraft";
   if (category === 10 || t.includes("חדירת מחבלים")) return "infiltration";
-  if (category === 14 || t.includes("בדקות הקרובות צפויות להתקבל התרעות") || t.includes("היכנסו") || t.includes("להיכנס")) return "shelter_enter";
-  if (category === 13 || t.includes("ניתן לצאת") || t.includes("האירוע הסתיים") || t.includes("החשש הוסר")) return "shelter_exit";
   return "other";
 }
 
