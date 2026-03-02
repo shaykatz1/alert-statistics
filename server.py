@@ -235,14 +235,16 @@ def count_shelter_entries_without_threats(df: pd.DataFrame) -> pd.DataFrame:
                 open_at = at
                 total_entries += 1
                 
-                # Check if there's a threat within 30 minutes after this entry
-                threats_after = group[
+                # Check if there's a threat before (10 min) or after (30 min) this entry
+                # Before: the launch/aircraft that caused the shelter alert
+                # After: threats during the shelter stay
+                threats_related = group[
                     (group["alert_type"].isin(["launch", "aircraft"])) & 
-                    (group["alert_dt"] >= at) & 
+                    (group["alert_dt"] >= at - pd.Timedelta(minutes=10)) & 
                     (group["alert_dt"] <= at + pd.Timedelta(minutes=30))
                 ]
                 
-                if len(threats_after) == 0:
+                if len(threats_related) == 0:
                     without_threats += 1
                     
             # Subsequent shelter_enter while already in shelter - ignore

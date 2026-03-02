@@ -373,14 +373,16 @@ function countSheltersWithoutThreats(rows, settlement) {
       openAt = at;
       totalEntries++;
       
-      // Check if there's a threat within 30 minutes after this entry
-      const threatsAfter = allEvents.filter((e) => 
+      // Check if there's a threat before (10 min) or after (30 min) this entry
+      // Before: the launch/aircraft that caused the shelter alert
+      // After: threats during the shelter stay
+      const threatsRelated = allEvents.filter((e) => 
         (e.alert_type === "launch" || e.alert_type === "aircraft") &&
-        e.alert_dt >= at && 
-        e.alert_dt <= at + (30 * 60 * 1000) // 30 minutes in milliseconds
+        e.alert_dt >= at - (10 * 60 * 1000) && // 10 minutes before
+        e.alert_dt <= at + (30 * 60 * 1000) // 30 minutes after
       );
       
-      if (threatsAfter.length === 0) {
+      if (threatsRelated.length === 0) {
         withoutThreats++;
       }
     }
