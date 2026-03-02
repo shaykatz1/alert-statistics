@@ -209,10 +209,7 @@ function updateRangeVisibility() {
 }
 
 function prepareRows(rows) {
-  const now = new Date();
-  const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-  return rows
+  const allRows = rows
     .map((r) => {
       const dt = new Date((r.alertDate || "").replace(" ", "T"));
       const category = Number(r.category || 0);
@@ -226,9 +223,22 @@ function prepareRows(rows) {
       };
     })
     .filter((r) => !Number.isNaN(r.alert_dt.getTime()))
-    .filter((r) => r.alert_dt >= weekAgo && r.alert_dt <= now)
-    .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type))
-    .map((r) => {
+    .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
+  
+  if (allRows.length === 0) {
+    return [];
+  }
+  
+  // Find the actual date range in the data
+  const dates = allRows.map(r => r.alert_dt).sort((a, b) => a - b);
+  const maxDate = dates[dates.length - 1];
+  
+  // Default to last 7 days of the data
+  const weekAgoFromData = new Date(maxDate.getTime() - 7 * 24 * 60 * 60 * 1000);
+  
+  const filtered = allRows.filter((r) => r.alert_dt >= weekAgoFromData && r.alert_dt <= maxDate);
+  
+  return filtered.map((r) => {
       const yyyy = r.alert_dt.getFullYear();
       const mm = String(r.alert_dt.getMonth() + 1).padStart(2, "0");
       const dd = String(r.alert_dt.getDate()).padStart(2, "0");
@@ -249,16 +259,21 @@ function prepareRows(rows) {
 
 function applyRangeFilter(rows) {
   const mode = $("rangeMode").value;
-  const now = new Date();
+  
+  // Find the max date in the data, don't use current date
+  const maxDateInData = rows.length > 0 
+    ? new Date(Math.max(...rows.map(r => r.alert_dt.getTime())))
+    : new Date();
+  
   if (mode === "week") return { rows, rangeStart: null, rangeEnd: null };
 
   const mapDays = { last_1d: 1, last_2d: 2, last_3d: 3, last_4d: 4 };
   if (mapDays[mode]) {
-    const rangeStart = new Date(now.getTime() - mapDays[mode] * 24 * 60 * 60 * 1000);
+    const rangeStart = new Date(maxDateInData.getTime() - mapDays[mode] * 24 * 60 * 60 * 1000);
     return {
-      rows: rows.filter((r) => r.alert_dt >= rangeStart && r.alert_dt <= now),
+      rows: rows.filter((r) => r.alert_dt >= rangeStart && r.alert_dt <= maxDateInData),
       rangeStart,
-      rangeEnd: now,
+      rangeEnd: maxDateInData,
     };
   }
 
@@ -376,10 +391,14 @@ function countSheltersWithoutThreats(rows, settlement) {
       // Check if there's a threat before (10 min) or after (30 min) this entry
       // Before: the launch/aircraft that caused the shelter alert
       // After: threats during the shelter stay
+      const atTime = at.getTime();
+      const windowStart = atTime - (10 * 60 * 1000); // 10 minutes before
+      const windowEnd = atTime + (30 * 60 * 1000);   // 30 minutes after
+      
       const threatsRelated = allEvents.filter((e) => 
         (e.alert_type === "launch" || e.alert_type === "aircraft") &&
-        e.alert_dt >= at - (10 * 60 * 1000) && // 10 minutes before
-        e.alert_dt <= at + (30 * 60 * 1000) // 30 minutes after
+        e.alert_dt.getTime() >= windowStart &&
+        e.alert_dt.getTime() <= windowEnd
       );
       
       if (threatsRelated.length === 0) {
