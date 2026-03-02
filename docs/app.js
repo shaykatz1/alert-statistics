@@ -348,11 +348,65 @@ function summarizeShelter(stays) {
   }));
 }
 
-function getSettlementStats(summary, stays, settlement) {
-  if (!settlement) return { settlement: null, total_shelter_minutes: 0, avg_stay_minutes: 0, stay_count: 0, longest_stay_minutes: 0, longest_stay_start: null, longest_stay_end: null };
+function countSheltersWithoutThreats(rows, settlement) {
+  // Count shelter_enter alerts that were not followed by launch/aircraft within 30 minutes
+  const shelterEnters = rows.filter((r) => r.alert_type === "shelter_enter" && r.settlement === settlement);
+  const threats = rows.filter((r) => (r.alert_type === "launch" || r.alert_type === "aircraft") && r.settlement === settlement);
+  
+  if (shelterEnters.length === 0) {
+    return { shelters_without_threats: 0, total_shelter_entries: 0 };
+  }
+  
+  let count = 0;
+  for (const shelter of shelterEnters) {
+    const shelterTime = shelter.alert_dt;
+    let hasThreat = false;
+    
+    for (const threat of threats) {
+      const threatTime = threat.alert_dt;
+      const timeDiffMinutes = (threatTime - shelterTime) / (1000 * 60); // milliseconds to minutes
+      if (timeDiffMinutes >= 0 && timeDiffMinutes <= 30) {
+        hasThreat = true;
+        break;
+      }
+    }
+    
+    if (!hasThreat) {
+      count++;
+    }
+  }
+  
+  return { shelters_without_threats: count, total_shelter_entries: shelterEnters.length };
+}
+
+function getSettlementStats(summary, stays, settlement, allRows) {
+  if (!settlement) return { 
+    settlement: null, 
+    total_shelter_minutes: 0, 
+    avg_stay_minutes: 0, 
+    stay_count: 0, 
+    longest_stay_minutes: 0, 
+    longest_stay_start: null, 
+    longest_stay_end: null,
+    shelters_without_threats: 0,
+    total_shelter_entries: 0
+  };
+  
   const row = summary.find((x) => x.settlement === settlement);
   const subset = stays.filter((s) => s.settlement === settlement).sort((a, b) => b.duration_minutes - a.duration_minutes);
-  if (!row) return { settlement, total_shelter_minutes: 0, avg_stay_minutes: 0, stay_count: 0, longest_stay_minutes: 0, longest_stay_start: null, longest_stay_end: null };
+  
+  if (!row) return { 
+    settlement, 
+    total_shelter_minutes: 0, 
+    avg_stay_minutes: 0, 
+    stay_count: 0, 
+    longest_stay_minutes: 0, 
+    longest_stay_start: null, 
+    longest_stay_end: null,
+    shelters_without_threats: 0,
+    total_shelter_entries: 0
+  };
+  
   const longest = subset[0];
   const toDt = (d) => {
     const yyyy = d.getFullYear();
@@ -364,6 +418,9 @@ function getSettlementStats(summary, stays, settlement) {
     return `${yyyy}-${mm}-${dd} ${HH}:${MM}:${SS}`;
   };
 
+  // Calculate shelters without threats
+  const withoutThreatsData = countSheltersWithoutThreats(allRows, settlement);
+
   return {
     settlement,
     total_shelter_minutes: row.shelter_minutes,
@@ -372,6 +429,8 @@ function getSettlementStats(summary, stays, settlement) {
     longest_stay_minutes: longest ? Math.round(longest.duration_minutes) : 0,
     longest_stay_start: longest ? toDt(longest.start_dt) : null,
     longest_stay_end: longest ? toDt(longest.end_dt) : null,
+    shelters_without_threats: withoutThreatsData.shelters_without_threats,
+    total_shelter_entries: withoutThreatsData.total_shelter_entries,
   };
 }
 
@@ -490,15 +549,27 @@ function renderFocusedSettlementStats(stats) {
   $("sStayCount").textContent = Number(stats.stay_count || 0).toLocaleString("he-IL");
   $("sLongestStay").textContent = formatMinutesToHHMM(stats.longest_stay_minutes || 0);
   $("sLongestStayWhen").textContent = stats.longest_stay_start && stats.longest_stay_end ? `${stats.longest_stay_start} עד ${stats.longest_stay_end}` : "-";
+  
+  // Display shelter entries without threats
+  const withoutThreats = stats.shelters_without_threats || 0;
+  const totalEntries = stats.total_shelter_entries || 0;
+  const percentage = totalEntries > 0 ? Math.round((withoutThreats / totalEntries) * 100) : 0;
+  $("sSheltersWithoutThreats").textContent = totalEntries > 0 ? `${withoutThreats} מתוך ${totalEntries} (${percentage}%)` : "-";
 }
 
 function renderCompareSettlementStats(targetId, stats) {
   const settlement = stats?.settlement || "לא נבחר יישוב";
+  const withoutThreats = stats?.shelters_without_threats || 0;
+  const totalEntries = stats?.total_shelter_entries || 0;
+  const percentage = totalEntries > 0 ? Math.round((withoutThreats / totalEntries) * 100) : 0;
+  const withoutThreatsText = totalEntries > 0 ? `${withoutThreats} מתוך ${totalEntries} (${percentage}%)` : "-";
+  
   $(targetId).innerHTML = `
     <div><strong>יישוב:</strong> ${settlement}</div>
     <div><strong>סה"כ זמן:</strong> ${formatMinutesToHHMM(stats?.total_shelter_minutes || 0)}</div>
     <div><strong>ממוצע לשהייה:</strong> ${formatMinutesToHHMM(stats?.avg_stay_minutes || 0)}</div>
     <div><strong>מספר שהיות:</strong> ${Number(stats?.stay_count || 0).toLocaleString("he-IL")}</div>
+    <div><strong>כניסות ללא שיגור:</strong> ${withoutThreatsText}</div>
     <div><strong>שהייה ארוכה:</strong> ${formatMinutesToHHMM(stats?.longest_stay_minutes || 0)}</div>
     <div><strong>מתי:</strong> ${stats?.longest_stay_start && stats?.longest_stay_end ? `${stats.longest_stay_start} עד ${stats.longest_stay_end}` : "-"}</div>
   `;
@@ -589,7 +660,7 @@ function runDashboard() {
   const shelterByHour = hourlyShelterMinutes(staysAfterDuration);
 
   const statsSettlement = selectedSettlement || null;
-  const selectedStats = getSettlementStats(shelterSummary, stays, statsSettlement);
+  const selectedStats = getSettlementStats(shelterSummary, stays, statsSettlement, baseFiltered);
 
   const compareA = $("compareSettlementA").getSelectedValue ? $("compareSettlementA").getSelectedValue() : $("compareSettlementA").value;
   const compareB = $("compareSettlementB").getSelectedValue ? $("compareSettlementB").getSelectedValue() : $("compareSettlementB").value;
@@ -610,8 +681,8 @@ function runDashboard() {
   ];
 
   const pairHourly = compareHourlyTwo(baseFiltered, stays, compareA, compareB);
-  const compareStatsA = getSettlementStats(shelterSummary, stays, compareA || null);
-  const compareStatsB = getSettlementStats(shelterSummary, stays, compareB || null);
+  const compareStatsA = getSettlementStats(shelterSummary, stays, compareA || null, baseFiltered);
+  const compareStatsB = getSettlementStats(shelterSummary, stays, compareB || null, baseFiltered);
 
   $("mLaunch").textContent = Number(typeCounts.launch || 0).toLocaleString("he-IL");
   $("mEnter").textContent = Number(typeCounts.shelter_enter || 0).toLocaleString("he-IL");

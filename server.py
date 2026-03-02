@@ -206,6 +206,49 @@ def extract_shelter_stays(df: pd.DataFrame, range_start: datetime | None, range_
     return pd.DataFrame(records)
 
 
+def count_shelter_entries_without_threats(df: pd.DataFrame) -> pd.DataFrame:
+    """Count shelter_enter alerts that were not followed by launch/aircraft within 30 minutes."""
+    if len(df) == 0:
+        return pd.DataFrame(columns=["settlement", "shelters_without_threats", "total_shelter_entries"])
+
+    # Get all shelter_enter events
+    shelter_enters = df[df["alert_type"] == "shelter_enter"][["settlement", "alert_dt"]].copy()
+    
+    # Get all launch and aircraft events
+    threats = df[df["alert_type"].isin(["launch", "aircraft"])][["settlement", "alert_dt"]].copy()
+    
+    if len(shelter_enters) == 0:
+        return pd.DataFrame(columns=["settlement", "shelters_without_threats", "total_shelter_entries"])
+    
+    results = []
+    for settlement in shelter_enters["settlement"].unique():
+        settlement_shelters = shelter_enters[shelter_enters["settlement"] == settlement]
+        settlement_threats = threats[threats["settlement"] == settlement]
+        
+        count_without_threat = 0
+        for _, shelter_row in settlement_shelters.iterrows():
+            shelter_time = shelter_row["alert_dt"]
+            # Check if there's a threat within 30 minutes after the shelter alert
+            has_threat = False
+            for _, threat_row in settlement_threats.iterrows():
+                threat_time = threat_row["alert_dt"]
+                time_diff = (threat_time - shelter_time).total_seconds() / 60.0
+                if 0 <= time_diff <= 30:  # Within 30 minutes after
+                    has_threat = True
+                    break
+            
+            if not has_threat:
+                count_without_threat += 1
+        
+        results.append({
+            "settlement": settlement,
+            "shelters_without_threats": count_without_threat,
+            "total_shelter_entries": len(settlement_shelters)
+        })
+    
+    return pd.DataFrame(results)
+
+
 def summarize_shelter_stays(stays_df: pd.DataFrame) -> pd.DataFrame:
     if len(stays_df) == 0:
         return pd.DataFrame(columns=["settlement", "shelter_minutes", "shelter_hours", "stay_count", "avg_stay_minutes"])
@@ -398,7 +441,7 @@ def build_unique_events(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def get_settlement_stats(
-    shelter_df: pd.DataFrame, stays_df: pd.DataFrame, selected_settlement: str | None
+    shelter_df: pd.DataFrame, stays_df: pd.DataFrame, without_threats_df: pd.DataFrame, selected_settlement: str | None
 ) -> dict:
     if not selected_settlement:
         return {
@@ -409,6 +452,8 @@ def get_settlement_stats(
             "longest_stay_minutes": 0,
             "longest_stay_start": None,
             "longest_stay_end": None,
+            "shelters_without_threats": 0,
+            "total_shelter_entries": 0,
         }
 
     match = shelter_df[shelter_df["settlement"] == selected_settlement]
@@ -421,6 +466,8 @@ def get_settlement_stats(
             "longest_stay_minutes": 0,
             "longest_stay_start": None,
             "longest_stay_end": None,
+            "shelters_without_threats": 0,
+            "total_shelter_entries": 0,
         }
 
     row = match.iloc[0]
@@ -434,6 +481,15 @@ def get_settlement_stats(
         longest_stay_start = max_row["start_dt"].strftime("%Y-%m-%d %H:%M:%S")
         longest_stay_end = max_row["end_dt"].strftime("%Y-%m-%d %H:%M:%S")
 
+    # Get shelter without threats stats
+    without_threats_match = without_threats_df[without_threats_df["settlement"] == selected_settlement]
+    shelters_without_threats = 0
+    total_shelter_entries = 0
+    if len(without_threats_match) > 0:
+        threat_row = without_threats_match.iloc[0]
+        shelters_without_threats = int(threat_row["shelters_without_threats"])
+        total_shelter_entries = int(threat_row["total_shelter_entries"])
+
     return {
         "settlement": selected_settlement,
         "total_shelter_minutes": int(row["shelter_minutes"]),
@@ -442,15 +498,17 @@ def get_settlement_stats(
         "longest_stay_minutes": longest_stay_minutes,
         "longest_stay_start": longest_stay_start,
         "longest_stay_end": longest_stay_end,
+        "shelters_without_threats": shelters_without_threats,
+        "total_shelter_entries": total_shelter_entries,
     }
 
 
 def build_compare_two_stats(
-    shelter_df: pd.DataFrame, stays_df: pd.DataFrame, settlement_a: str, settlement_b: str
+    shelter_df: pd.DataFrame, stays_df: pd.DataFrame, without_threats_df: pd.DataFrame, settlement_a: str, settlement_b: str
 ) -> dict:
     return {
-        "a": get_settlement_stats(shelter_df, stays_df, settlement_a if settlement_a else None),
-        "b": get_settlement_stats(shelter_df, stays_df, settlement_b if settlement_b else None),
+        "a": get_settlement_stats(shelter_df, stays_df, without_threats_df, settlement_a if settlement_a else None),
+        "b": get_settlement_stats(shelter_df, stays_df, without_threats_df, settlement_b if settlement_b else None),
     }
 
 
@@ -467,6 +525,7 @@ def alerts_api():
 
         stays_df = extract_shelter_stays(base_filtered, range_start, range_end)
         shelter_df = summarize_shelter_stays(stays_df)
+        without_threats_df = count_shelter_entries_without_threats(base_filtered)
         filtered, shelter_filtered, stays_filtered, selected_settlements = apply_settlement_filters(
             base_filtered, shelter_df, stays_df
         )
@@ -482,7 +541,7 @@ def alerts_api():
         stats_settlement = request.args.get("stats_settlement", default=None, type=str)
         if not stats_settlement and len(selected_settlements) == 1:
             stats_settlement = selected_settlements[0]
-        selected_settlement_stats = get_settlement_stats(shelter_filtered, stays_filtered, stats_settlement)
+        selected_settlement_stats = get_settlement_stats(shelter_filtered, stays_filtered, without_threats_df, stats_settlement)
 
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
@@ -504,7 +563,7 @@ def alerts_api():
     compare_two_hourly_launches, compare_two_hourly_shelter = build_compare_two_hourly(
         base_filtered, stays_df, compare_a, compare_b
     )
-    compare_two_stats = build_compare_two_stats(shelter_df, stays_df, compare_a, compare_b)
+    compare_two_stats = build_compare_two_stats(shelter_df, stays_df, without_threats_df, compare_a, compare_b)
 
     rows = unique_events[["datetime", "title", "category", "alert_type", "settlements_count", "settlements"]].to_dict(orient="records")
     peak_hour = int(pd.DataFrame(by_hour_launches).sort_values("count", ascending=False).iloc[0]["hour"]) if by_hour_launches else None
