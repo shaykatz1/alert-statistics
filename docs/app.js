@@ -349,34 +349,52 @@ function summarizeShelter(stays) {
 }
 
 function countSheltersWithoutThreats(rows, settlement) {
-  // Count shelter_enter alerts that were not followed by launch/aircraft within 30 minutes
-  const shelterEnters = rows.filter((r) => r.alert_type === "shelter_enter" && r.settlement === settlement);
-  const threats = rows.filter((r) => (r.alert_type === "launch" || r.alert_type === "aircraft") && r.settlement === settlement);
+  // Count first shelter_enter of each stay that were not followed by launch/aircraft within 30 minutes
+  // Uses same logic as extractShelterStays - only counts first entry until exit
+  const allEvents = rows.filter((r) => r.settlement === settlement && 
+    (r.alert_type === "shelter_enter" || r.alert_type === "shelter_exit" || 
+     r.alert_type === "launch" || r.alert_type === "aircraft"))
+    .sort((a, b) => a.alert_dt - b.alert_dt);
   
-  if (shelterEnters.length === 0) {
+  if (allEvents.length === 0) {
     return { shelters_without_threats: 0, total_shelter_entries: 0 };
   }
   
-  let count = 0;
-  for (const shelter of shelterEnters) {
-    const shelterTime = shelter.alert_dt;
-    let hasThreat = false;
+  let openAt = null;
+  let totalEntries = 0;
+  let withoutThreats = 0;
+  
+  for (const event of allEvents) {
+    const typ = event.alert_type;
+    const at = event.alert_dt;
     
-    for (const threat of threats) {
-      const threatTime = threat.alert_dt;
-      const timeDiffMinutes = (threatTime - shelterTime) / (1000 * 60); // milliseconds to minutes
-      if (timeDiffMinutes >= 0 && timeDiffMinutes <= 30) {
-        hasThreat = true;
-        break;
+    // First shelter_enter of a stay
+    if (typ === "shelter_enter" && openAt === null) {
+      openAt = at;
+      totalEntries++;
+      
+      // Check if there's a threat within 30 minutes after this entry
+      const threatsAfter = allEvents.filter((e) => 
+        (e.alert_type === "launch" || e.alert_type === "aircraft") &&
+        e.alert_dt >= at && 
+        e.alert_dt <= at + (30 * 60 * 1000) // 30 minutes in milliseconds
+      );
+      
+      if (threatsAfter.length === 0) {
+        withoutThreats++;
       }
     }
-    
-    if (!hasThreat) {
-      count++;
+    // Subsequent shelter_enter while already in shelter - ignore
+    else if (typ === "shelter_enter" && openAt !== null) {
+      continue;
+    }
+    // Exit from shelter
+    else if (typ === "shelter_exit" && openAt !== null) {
+      openAt = null;
     }
   }
   
-  return { shelters_without_threats: count, total_shelter_entries: shelterEnters.length };
+  return { shelters_without_threats: withoutThreats, total_shelter_entries: totalEntries };
 }
 
 function getSettlementStats(summary, stays, settlement, allRows) {

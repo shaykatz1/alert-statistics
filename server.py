@@ -207,44 +207,58 @@ def extract_shelter_stays(df: pd.DataFrame, range_start: datetime | None, range_
 
 
 def count_shelter_entries_without_threats(df: pd.DataFrame) -> pd.DataFrame:
-    """Count shelter_enter alerts that were not followed by launch/aircraft within 30 minutes."""
+    """Count first shelter_enter of each stay that were not followed by launch/aircraft within 30 minutes.
+    Uses same logic as extract_shelter_stays - only counts first entry until exit."""
     if len(df) == 0:
         return pd.DataFrame(columns=["settlement", "shelters_without_threats", "total_shelter_entries"])
 
-    # Get all shelter_enter events
-    shelter_enters = df[df["alert_type"] == "shelter_enter"][["settlement", "alert_dt"]].copy()
+    # Get all shelter events sorted by time
+    data = df[df["alert_type"].isin(["shelter_enter", "shelter_exit", "launch", "aircraft"])][
+        ["settlement", "alert_dt", "alert_type"]
+    ].sort_values(["settlement", "alert_dt"])
     
-    # Get all launch and aircraft events
-    threats = df[df["alert_type"].isin(["launch", "aircraft"])][["settlement", "alert_dt"]].copy()
-    
-    if len(shelter_enters) == 0:
+    if len(data) == 0:
         return pd.DataFrame(columns=["settlement", "shelters_without_threats", "total_shelter_entries"])
     
     results = []
-    for settlement in shelter_enters["settlement"].unique():
-        settlement_shelters = shelter_enters[shelter_enters["settlement"] == settlement]
-        settlement_threats = threats[threats["settlement"] == settlement]
+    for settlement, group in data.groupby("settlement"):
+        open_at: datetime | None = None
+        total_entries = 0
+        without_threats = 0
         
-        count_without_threat = 0
-        for _, shelter_row in settlement_shelters.iterrows():
-            shelter_time = shelter_row["alert_dt"]
-            # Check if there's a threat within 30 minutes after the shelter alert
-            has_threat = False
-            for _, threat_row in settlement_threats.iterrows():
-                threat_time = threat_row["alert_dt"]
-                time_diff = (threat_time - shelter_time).total_seconds() / 60.0
-                if 0 <= time_diff <= 30:  # Within 30 minutes after
-                    has_threat = True
-                    break
+        for _, row in group.iterrows():
+            at = row["alert_dt"]
+            typ = row["alert_type"]
             
-            if not has_threat:
-                count_without_threat += 1
+            # First shelter_enter of a stay
+            if typ == "shelter_enter" and open_at is None:
+                open_at = at
+                total_entries += 1
+                
+                # Check if there's a threat within 30 minutes after this entry
+                threats_after = group[
+                    (group["alert_type"].isin(["launch", "aircraft"])) & 
+                    (group["alert_dt"] >= at) & 
+                    (group["alert_dt"] <= at + pd.Timedelta(minutes=30))
+                ]
+                
+                if len(threats_after) == 0:
+                    without_threats += 1
+                    
+            # Subsequent shelter_enter while already in shelter - ignore
+            elif typ == "shelter_enter" and open_at is not None:
+                continue
+                
+            # Exit from shelter
+            elif typ == "shelter_exit" and open_at is not None:
+                open_at = None
         
-        results.append({
-            "settlement": settlement,
-            "shelters_without_threats": count_without_threat,
-            "total_shelter_entries": len(settlement_shelters)
-        })
+        if total_entries > 0:
+            results.append({
+                "settlement": settlement,
+                "shelters_without_threats": without_threats,
+                "total_shelter_entries": total_entries
+            })
     
     return pd.DataFrame(results)
 
