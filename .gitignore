@@ -22,3 +22,4 @@ scripts/capture_*.py
 scripts/test_*.py
 scripts/fetch_by_time_chunks.py
 scripts/fetch_historical_by_settlement.py
+docs/test.html
