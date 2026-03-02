@@ -1,6 +1,6 @@
 {
-  "source": "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json",
-  "updated_at_utc": "2026-03-02T07:04:23.889190+00:00",
-  "total_records": 38377,
-  "new_records_added": 0
+  "source": "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json and https://alerts-history.oref.org.il/Shared/Ajax/GetAlarmsHistory.aspx (historical, mode=3 last month)",
+  "updated_at_utc": "2026-03-02T08:04:06.896814+00:00",
+  "total_records": 104337,
+  "date_range": "2026-02-06 to 2026-03-02"
 }

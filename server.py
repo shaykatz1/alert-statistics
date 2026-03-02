@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
-import subprocess
+import os
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 from flask import Flask, jsonify, render_template, request
 
-HISTORY_URL = "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json"
+LOCAL_HISTORY_FILE = Path(__file__).parent / "docs" / "data" / "alerts_history.json"
 MISSILE_CATEGORY = 1
 MISSILE_TITLE = "ירי רקטות וטילים"
 
@@ -27,10 +28,13 @@ def classify_alert(title: str, category: int) -> str:
     if category == 2 or "חדירת כלי טיס עוין" in title or "כלי טיס עוין" in title:
         return "aircraft"
 
+    if category == 10 or "חדירת מחבלים" in title:
+        return "infiltration"
+
     if category == 14 or "בדקות הקרובות צפויות להתקבל התרעות" in title or "היכנסו" in title or "להיכנס" in title:
         return "shelter_enter"
 
-    if category == 13 or "ניתן לצאת" in title or "האירוע הסתיים" in title:
+    if category == 13 or "ניתן לצאת" in title or "האירוע הסתיים" in title or "החשש הוסר" in title:
         return "shelter_exit"
 
     return "other"
@@ -44,20 +48,15 @@ def fetch_alerts_history() -> pd.DataFrame:
         if (now - _cached_at).total_seconds() < CACHE_SECONDS:
             return _cached_df.copy()
 
-    result = subprocess.run(
-        ["curl", "-s", "--max-time", "20", HISTORY_URL],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("failed to fetch data from Oref")
+    if not LOCAL_HISTORY_FILE.exists():
+        raise RuntimeError(f"Local data file not found: {LOCAL_HISTORY_FILE}")
+    
+    with open(LOCAL_HISTORY_FILE, 'r', encoding='utf-8') as f:
+        rows = json.load(f)
+    
+    if not rows:
+        raise RuntimeError("empty data in local file")
 
-    payload = result.stdout.lstrip("\ufeff").strip()
-    if not payload:
-        raise RuntimeError("empty response from Oref")
-
-    rows = json.loads(payload)
     df = pd.DataFrame(rows)
     needed = {"alertDate", "title", "data", "category"}
     if not needed.issubset(set(df.columns)):
@@ -67,11 +66,12 @@ def fetch_alerts_history() -> pd.DataFrame:
     df["alert_dt"] = pd.to_datetime(df["alertDate"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
     df = df.dropna(subset=["alert_dt"]).copy()
 
-    week_ago = now - timedelta(days=7)
-    df = df[(df["alert_dt"] >= week_ago) & (df["alert_dt"] <= now)].copy()
+    # Show last 30 days to include all historical data
+    month_ago = now - timedelta(days=30)
+    df = df[(df["alert_dt"] >= month_ago) & (df["alert_dt"] <= now)].copy()
 
     df["alert_type"] = df.apply(lambda r: classify_alert(str(r.get("title", "")), int(r.get("category", 0))), axis=1)
-    df = df[df["alert_type"].isin(["launch", "shelter_enter", "shelter_exit", "aircraft"])].copy()
+    df = df[df["alert_type"].isin(["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"])].copy()
 
     df["hour"] = df["alert_dt"].dt.hour
     df["date"] = df["alert_dt"].dt.strftime("%Y-%m-%d")
@@ -470,7 +470,7 @@ def alerts_api():
             base_filtered, shelter_df, stays_df
         )
 
-        selected_types = [t for t in request.args.getlist("alert_type") if t in {"launch", "shelter_enter", "shelter_exit", "aircraft"}]
+        selected_types = [t for t in request.args.getlist("alert_type") if t in {"launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"}]
         if selected_types:
             filtered_for_events = filtered[filtered["alert_type"].isin(selected_types)]
         else:
@@ -522,7 +522,7 @@ def alerts_api():
             "default_start_date": all_dates[0] if all_dates else None,
             "default_end_date": all_dates[-1] if all_dates else None,
             "available_types": ["launch", "shelter_enter", "shelter_exit", "aircraft"],
-            "source": HISTORY_URL,
+            "source": str(LOCAL_HISTORY_FILE),
             "window_days": 7,
             "mode": mode,
             "has_shelter_history": bool((df["alert_type"] == "shelter_enter").any() and (df["alert_type"] == "shelter_exit").any()),

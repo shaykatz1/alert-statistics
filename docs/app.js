@@ -15,6 +15,7 @@ function typeLabel(t) {
   if (t === "shelter_enter") return "כניסה למרחב מוגן";
   if (t === "shelter_exit") return "יציאה ממרחב מוגן";
   if (t === "aircraft") return "חדירת כלי טיס";
+  if (t === "infiltration") return "חדירת מחבלים";
   return t;
 }
 
@@ -22,8 +23,9 @@ function classifyAlert(title, category) {
   const t = title || "";
   if (category === 1 || t.includes("ירי רקטות וטילים")) return "launch";
   if (category === 2 || t.includes("חדירת כלי טיס עוין") || t.includes("כלי טיס עוין")) return "aircraft";
+  if (category === 10 || t.includes("חדירת מחבלים")) return "infiltration";
   if (category === 14 || t.includes("בדקות הקרובות צפויות להתקבל התרעות") || t.includes("היכנסו") || t.includes("להיכנס")) return "shelter_enter";
-  if (category === 13 || t.includes("ניתן לצאת") || t.includes("האירוע הסתיים")) return "shelter_exit";
+  if (category === 13 || t.includes("ניתן לצאת") || t.includes("האירוע הסתיים") || t.includes("החשש הוסר")) return "shelter_exit";
   return "other";
 }
 
@@ -224,7 +226,7 @@ function prepareRows(rows) {
     })
     .filter((r) => !Number.isNaN(r.alert_dt.getTime()))
     .filter((r) => r.alert_dt >= weekAgo && r.alert_dt <= now)
-    .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft"].includes(r.alert_type))
+    .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type))
     .map((r) => {
       const yyyy = r.alert_dt.getFullYear();
       const mm = String(r.alert_dt.getMonth() + 1).padStart(2, "0");
@@ -578,7 +580,7 @@ function runDashboard() {
   const filteredForEvents = selectedTypes.length ? afterDuration.filter((r) => selectedTypes.includes(r.alert_type)) : afterDuration;
 
   const uniq = uniqueEvents(filteredForEvents);
-  const typeCounts = { launch: 0, shelter_enter: 0, shelter_exit: 0, aircraft: 0 };
+  const typeCounts = { launch: 0, shelter_enter: 0, shelter_exit: 0, aircraft: 0, infiltration: 0 };
   uniq.forEach((e) => { typeCounts[e.alert_type] = (typeCounts[e.alert_type] || 0) + 1; });
 
   const launchByHour = hourlyCountsFromEvents(uniqueEvents(afterDuration.filter((r) => r.alert_type === "launch")));

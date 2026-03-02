@@ -6,3 +6,19 @@ logs/
 scripts/update_and_push.sh
 scripts/setup_cron.sh
 scripts/crontab_entry.txt
+
+# Temporary test files
+test_classification.py
+
+# Historical data intermediate files
+data/historical_*.json
+data/test_*.json
+
+# Temporary investigation scripts
+scripts/investigate_history_api.py
+scripts/scan_history_api.py
+scripts/auto_fill_form.py
+scripts/capture_*.py
+scripts/test_*.py
+scripts/fetch_by_time_chunks.py
+scripts/fetch_historical_by_settlement.py
