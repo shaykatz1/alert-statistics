@@ -231,7 +231,10 @@ function prepareRows(rows) {
       .filter((r) => !Number.isNaN(r.alert_dt.getTime()))
       .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
     
-    allRows.push(...processed);
+    // Use for loop instead of spread operator to avoid stack overflow
+    for (let j = 0; j < processed.length; j++) {
+      allRows.push(processed[j]);
+    }
   }
   
   if (allRows.length === 0) {
@@ -272,7 +275,10 @@ function prepareRows(rows) {
         event_key: `${datetime}|${r.title}|${r.category}`,
       };
     });
-    result.push(...mapped);
+    // Use for loop instead of spread operator to avoid stack overflow
+    for (let j = 0; j < mapped.length; j++) {
+      result.push(mapped[j]);
+    }
   }
   
   return result;
@@ -282,9 +288,17 @@ function applyRangeFilter(rows) {
   const mode = $("rangeMode").value;
   
   // Find the max date in the data, don't use current date
-  const maxDateInData = rows.length > 0 
-    ? new Date(Math.max(...rows.map(r => r.alert_dt.getTime())))
-    : new Date();
+  let maxDateInData = new Date();
+  if (rows.length > 0) {
+    let maxTime = rows[0].alert_dt.getTime();
+    for (let i = 1; i < rows.length; i++) {
+      const time = rows[i].alert_dt.getTime();
+      if (time > maxTime) {
+        maxTime = time;
+      }
+    }
+    maxDateInData = new Date(maxTime);
+  }
   
   if (mode === "week") return { rows, rangeStart: null, rangeEnd: null };
 
@@ -592,7 +606,9 @@ function compareHourlyTwo(rows, stays, a, b) {
 function renderTable(rows) {
   const body = $("rowsBody");
   body.innerHTML = "";
-  rows.slice(0, 500).forEach((row) => {
+  // Limit to 500 rows for performance
+  const limited = rows.length > 500 ? rows.slice(0, 500) : rows;
+  limited.forEach((row) => {
     const tr = document.createElement("tr");
     [row.datetime, typeLabel(row.alert_type), row.title, row.category, row.settlements_count, row.settlements].forEach((value) => {
       const td = document.createElement("td");
@@ -780,7 +796,10 @@ function runDashboard() {
 
     renderCompareSettlementStats("compareStatsA", compareStatsA);
     renderCompareSettlementStats("compareStatsB", compareStatsB);
-    renderTable(uniq.sort((a, b) => (a.datetime < b.datetime ? 1 : -1)));
+    
+    // Sort only what we need for the table to avoid memory issues
+    const sortedForTable = uniq.slice(0, 500).sort((a, b) => (a.datetime < b.datetime ? 1 : -1));
+    renderTable(sortedForTable);
 
     const csv = toCsv(uniq);
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
