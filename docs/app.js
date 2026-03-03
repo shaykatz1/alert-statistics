@@ -388,6 +388,100 @@ function extractShelterStays(rows, rangeStart, rangeEnd) {
   return stays;
 }
 
+function extractLaunchesWithoutWarningStays(rows, rangeStart, rangeEnd) {
+  // Calculate shelter time for launches without advance warning
+  // Logic: Start counting from launch time, end after 10 minutes OR at next launch (whichever comes first)
+  // Last launch always counts full 10 minutes
+  
+  const bySettlement = {};
+  
+  // Group by settlement
+  rows.forEach((r) => {
+    if (!bySettlement[r.settlement]) {
+      bySettlement[r.settlement] = [];
+    }
+    bySettlement[r.settlement].push(r);
+  });
+  
+  const stays = [];
+  
+  Object.keys(bySettlement).forEach((settlement) => {
+    const events = bySettlement[settlement].sort((a, b) => a.alert_dt - b.alert_dt);
+    
+    let inShelter = false;
+    let shelterStart = null;
+    let lastLaunchTime = null;
+    const launchesWithoutWarning = [];
+    
+    events.forEach((event) => {
+      const cat = event.category;
+      
+      // Track shelter windows
+      if (cat === 14 && !inShelter) {
+        inShelter = true;
+        shelterStart = event.alert_dt;
+      } else if (cat === 13 && inShelter) {
+        inShelter = false;
+        shelterStart = null;
+      }
+      
+      // Track launches
+      if (cat === 1) {
+        const currentLaunchTime = event.alert_dt;
+        
+        if (!inShelter) {
+          // Launch without advance warning (outside shelter window)
+          // Only count if 10+ minutes passed since last launch (new event)
+          if (lastLaunchTime === null) {
+            launchesWithoutWarning.push(currentLaunchTime);
+            lastLaunchTime = currentLaunchTime;
+          } else {
+            const timeSinceLast = (currentLaunchTime.getTime() - lastLaunchTime.getTime()) / 1000;
+            if (timeSinceLast >= 600) {  // 10 minutes
+              launchesWithoutWarning.push(currentLaunchTime);
+            }
+            lastLaunchTime = currentLaunchTime;
+          }
+        } else {
+          lastLaunchTime = currentLaunchTime;
+        }
+      }
+    });
+    
+    // Now calculate shelter durations for launches without warning
+    for (let i = 0; i < launchesWithoutWarning.length; i++) {
+      const launchTime = launchesWithoutWarning[i];
+      let endTime;
+      
+      if (i < launchesWithoutWarning.length - 1) {
+        // Not the last launch - end at next launch or 10 minutes, whichever comes first
+        const nextLaunchTime = launchesWithoutWarning[i + 1];
+        const tenMinutesLater = new Date(launchTime.getTime() + 10 * 60 * 1000);
+        endTime = nextLaunchTime < tenMinutesLater ? nextLaunchTime : tenMinutesLater;
+      } else {
+        // Last launch - always 10 minutes
+        endTime = new Date(launchTime.getTime() + 10 * 60 * 1000);
+      }
+      
+      let start = launchTime;
+      let end = endTime;
+      if (rangeStart) start = start > rangeStart ? start : rangeStart;
+      if (rangeEnd) end = end < rangeEnd ? end : rangeEnd;
+      
+      if (end > start) {
+        stays.push({
+          settlement,
+          start_dt: start,
+          end_dt: end,
+          duration_minutes: (end - start) / 60000
+        });
+      }
+    }
+  });
+  
+  return stays;
+}
+
 function summarizeShelter(stays) {
   const map = new Map();
   stays.forEach((s) => {
@@ -877,7 +971,9 @@ function runDashboard() {
     }
 
     const { rows: baseFiltered, rangeStart, rangeEnd } = applyRangeFilter(prepared);
-    const stays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
+    const regularStays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
+    const launchWithoutWarningStays = extractLaunchesWithoutWarningStays(baseFiltered, rangeStart, rangeEnd);
+    const stays = [...regularStays, ...launchWithoutWarningStays];
     const shelterSummary = summarizeShelter(stays);
 
     let afterDuration = baseFiltered;

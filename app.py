@@ -185,6 +185,89 @@ def calculate_alert_durations(df: pd.DataFrame) -> pd.DataFrame:
     return result_df
 
 
+def calculate_shelter_time_for_launches_without_warning(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate shelter time for launches without advance warning.
+    
+    Logic:
+    - Start counting from launch time
+    - End after 10 minutes OR at next launch (whichever comes first)
+    - Last launch always counts full 10 minutes
+    
+    Returns a dataframe with shelter durations for launches without advance warning.
+    """
+    from collections import defaultdict
+    
+    # Group events by settlement
+    by_settlement = defaultdict(list)
+    for _, row in df.iterrows():
+        by_settlement[row["settlement"]].append({
+            "alert_dt": row["alert_dt"],
+            "category": row["category"]
+        })
+    
+    shelter_periods = []
+    
+    for settlement, events in by_settlement.items():
+        # Sort by time
+        sorted_events = sorted(events, key=lambda x: x["alert_dt"])
+        
+        in_shelter = False
+        shelter_start = None
+        last_launch_time = None
+        launches_without_warning = []
+        
+        for event in sorted_events:
+            cat = event["category"]
+            
+            # Track shelter windows
+            if cat == ADVANCE_WARNING_CATEGORY and not in_shelter:
+                in_shelter = True
+                shelter_start = event["alert_dt"]
+            elif cat == MISSILE_CATEGORY_END and in_shelter:
+                in_shelter = False
+                shelter_start = None
+            
+            # Track launches
+            if cat == MISSILE_CATEGORY:
+                current_launch_time = event["alert_dt"]
+                
+                if not in_shelter:
+                    # Launch without advance warning (outside shelter window)
+                    # Only count if 10+ minutes passed since last launch (new event)
+                    if last_launch_time is None:
+                        launches_without_warning.append(current_launch_time)
+                        last_launch_time = current_launch_time
+                    else:
+                        time_since_last = (current_launch_time - last_launch_time).total_seconds()
+                        if time_since_last >= 600:  # 10 minutes
+                            launches_without_warning.append(current_launch_time)
+                        last_launch_time = current_launch_time
+                else:
+                    last_launch_time = current_launch_time
+        
+        # Calculate shelter durations for launches without warning
+        for i, launch_time in enumerate(launches_without_warning):
+            if i < len(launches_without_warning) - 1:
+                # Not the last launch - end at next launch or 10 minutes, whichever comes first
+                next_launch_time = launches_without_warning[i + 1]
+                ten_minutes_later = launch_time + timedelta(minutes=10)
+                end_time = min(next_launch_time, ten_minutes_later)
+            else:
+                # Last launch - always 10 minutes
+                end_time = launch_time + timedelta(minutes=10)
+            
+            duration_seconds = (end_time - launch_time).total_seconds()
+            shelter_periods.append({
+                "settlement": settlement,
+                "start_time": launch_time,
+                "end_time": end_time,
+                "duration_seconds": duration_seconds
+            })
+    
+    return pd.DataFrame(shelter_periods)
+
+
 def filter_frame(df: pd.DataFrame) -> pd.DataFrame:
     st.sidebar.header("סינונים")
 
@@ -297,6 +380,22 @@ def main() -> None:
         col2.metric("שיגורים ללא התרעה מקדימה", f"{launches_without_warning:,}")
         col3.metric("זמן ממוצע להתרעה", f"{avg_duration/60:.1f} דקות")
         col4.metric("טווח זמנים", f"{min_duration/60:.0f}-{max_duration/60:.0f} דקות")
+    
+    # Calculate shelter time for launches without warning
+    shelter_no_warning_df = calculate_shelter_time_for_launches_without_warning(df)
+    
+    if not shelter_no_warning_df.empty:
+        st.subheader("🔴 זמן שהייה במקלט לשיגורים ללא התרעה מקדימה")
+        st.caption("חישוב: מרגע השיגור עד 10 דקות או השיגור הבא (מה שקורה קודם)")
+        
+        total_shelter_minutes = shelter_no_warning_df["duration_seconds"].sum() / 60
+        avg_shelter_minutes = shelter_no_warning_df["duration_seconds"].mean() / 60
+        num_periods = len(shelter_no_warning_df)
+        
+        col1, col2, col3 = st.columns(3)
+        col1.metric("סה״כ תקופות שהייה", f"{num_periods:,}")
+        col2.metric("סה״כ זמן שהייה", f"{total_shelter_minutes:.1f} דקות")
+        col3.metric("ממוצע שהייה לתקופה", f"{avg_shelter_minutes:.1f} דקות")
 
     draw_charts(filtered)
 

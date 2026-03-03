@@ -206,6 +206,86 @@ def extract_shelter_stays(df: pd.DataFrame, range_start: datetime | None, range_
     return pd.DataFrame(records)
 
 
+def extract_launches_without_warning_stays(df: pd.DataFrame, range_start: datetime | None, range_end: datetime | None) -> pd.DataFrame:
+    """
+    Calculate shelter time for launches without advance warning.
+    
+    Logic:
+    - Start counting from launch time
+    - End after 10 minutes OR at next launch (whichever comes first)
+    - Last launch always counts full 10 minutes
+    """
+    if len(df) == 0:
+        return pd.DataFrame(columns=["settlement", "start_dt", "end_dt", "duration_minutes"])
+    
+    # Get all events needed for classification
+    data = df[["settlement", "alert_dt", "alert_type", "category"]].sort_values(["settlement", "alert_dt"])
+    
+    records: list[dict] = []
+    
+    for settlement, group in data.groupby("settlement"):
+        events = group.sort_values("alert_dt")
+        
+        in_shelter = False
+        last_launch_time: datetime | None = None
+        launches_without_warning: list[datetime] = []
+        
+        for _, row in events.iterrows():
+            cat = row["category"]
+            current_time = row["alert_dt"]
+            
+            # Track shelter windows
+            if cat == 14 and not in_shelter:  # Advance warning - category 14
+                in_shelter = True
+            elif cat == 13 and in_shelter:  # All clear - category 13
+                in_shelter = False
+            
+            # Track launches
+            if cat == 1:  # Launch - category 1
+                if not in_shelter:
+                    # Launch without advance warning (outside shelter window)
+                    # Only count if 10+ minutes passed since last launch (new event)
+                    if last_launch_time is None:
+                        launches_without_warning.append(current_time)
+                        last_launch_time = current_time
+                    else:
+                        time_since_last = (current_time - last_launch_time).total_seconds()
+                        if time_since_last >= 600:  # 10 minutes
+                            launches_without_warning.append(current_time)
+                        last_launch_time = current_time
+                else:
+                    last_launch_time = current_time
+        
+        # Calculate shelter durations for launches without warning
+        for i, launch_time in enumerate(launches_without_warning):
+            if i < len(launches_without_warning) - 1:
+                # Not the last launch - end at next launch or 10 minutes, whichever comes first
+                next_launch_time = launches_without_warning[i + 1]
+                ten_minutes_later = launch_time + timedelta(minutes=10)
+                end_time = min(next_launch_time, ten_minutes_later)
+            else:
+                # Last launch - always 10 minutes
+                end_time = launch_time + timedelta(minutes=10)
+            
+            start = launch_time
+            end = end_time
+            
+            if range_start is not None:
+                start = max(start, range_start)
+            if range_end is not None:
+                end = min(end, range_end)
+            
+            if end > start:
+                records.append({
+                    "settlement": settlement,
+                    "start_dt": start,
+                    "end_dt": end,
+                    "duration_minutes": (end - start).total_seconds() / 60.0,
+                })
+    
+    return pd.DataFrame(records)
+
+
 def count_shelter_entries_without_threats(df: pd.DataFrame) -> pd.DataFrame:
     """Count first shelter_enter of each stay that were not followed by launch/aircraft within 30 minutes.
     Uses same logic as extract_shelter_stays - only counts first entry until exit."""
@@ -539,7 +619,9 @@ def alerts_api():
         df = fetch_alerts_history()
         base_filtered, mode, range_start, range_end = apply_base_filters(df)
 
-        stays_df = extract_shelter_stays(base_filtered, range_start, range_end)
+        regular_stays_df = extract_shelter_stays(base_filtered, range_start, range_end)
+        launch_no_warning_stays_df = extract_launches_without_warning_stays(base_filtered, range_start, range_end)
+        stays_df = pd.concat([regular_stays_df, launch_no_warning_stays_df], ignore_index=True)
         shelter_df = summarize_shelter_stays(stays_df)
         without_threats_df = count_shelter_entries_without_threats(base_filtered)
         filtered, shelter_filtered, stays_filtered, selected_settlements = apply_settlement_filters(
