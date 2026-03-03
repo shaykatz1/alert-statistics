@@ -14,6 +14,8 @@ HISTORY_URL = "https://www.oref.org.il/WarningMessages/alert/History/AlertsHisto
 SETTLEMENT_REGION_PATH = Path("data/settlement_regions.csv")
 
 MISSILE_CATEGORY = 1
+MISSILE_CATEGORY_END = 13
+ADVANCE_WARNING_CATEGORY = 14
 MISSILE_TITLE = "ירי רקטות וטילים"
 
 
@@ -48,8 +50,13 @@ def fetch_alerts_history() -> pd.DataFrame:
     df["alert_dt"] = pd.to_datetime(df["alertDate"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
     df = df.dropna(subset=["alert_dt"])
 
-    # Keep missile launch alerts only.
-    df = df[(df["category"] == MISSILE_CATEGORY) | (df["title"].str.contains(MISSILE_TITLE, na=False))].copy()
+    # Keep missile launch alerts (category 1), advance warnings (category 14), and event-ended alerts (category 13).
+    df = df[
+        (df["category"] == MISSILE_CATEGORY) | 
+        (df["category"] == MISSILE_CATEGORY_END) |
+        (df["category"] == ADVANCE_WARNING_CATEGORY) |
+        (df["title"].str.contains(MISSILE_TITLE, na=False))
+    ].copy()
 
     now = datetime.now()
     week_ago = now - timedelta(days=7)
@@ -84,6 +91,98 @@ def enrich_with_regions(df: pd.DataFrame) -> pd.DataFrame:
     merged = df.merge(mapping.drop_duplicates("settlement"), how="left", on="settlement")
     merged["region"] = merged["region"].fillna("לא ממופה")
     return merged
+
+
+def calculate_alert_durations(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate time between advance warning (category 14) and first launch in that shelter period.
+    
+    Logic:
+    - Category 14 (advance warning) = shelter entry
+    - Category 1 (launches) between 14 and 13 = part of same event
+    - Category 13 (all clear) = shelter exit
+    - Only the FIRST launch in each 14->13 window is counted
+    - Launches outside 14->13 windows AND with 10+ min gap from previous launch = launches without advance warning
+    
+    Returns a dataframe with durations for each shelter period that had launches.
+    """
+    from collections import defaultdict
+    
+    # Group events by settlement
+    by_settlement = defaultdict(list)
+    for _, row in df.iterrows():
+        by_settlement[row["settlement"]].append({
+            "alert_dt": row["alert_dt"],
+            "category": row["category"]
+        })
+    
+    durations = []
+    launches_without_warning_count = 0
+    total_launches = 0
+    
+    # For each settlement, find shelter windows (14->13) and first launch in each
+    for settlement, events in by_settlement.items():
+        # Sort by time
+        sorted_events = sorted(events, key=lambda x: x["alert_dt"])
+        
+        in_shelter = False
+        shelter_start = None
+        first_launch_in_window = None
+        last_launch_time = None
+        
+        for event in sorted_events:
+            cat = event["category"]
+            
+            if cat == ADVANCE_WARNING_CATEGORY and not in_shelter:
+                # Start of shelter window
+                in_shelter = True
+                shelter_start = event["alert_dt"]
+                first_launch_in_window = None
+                
+            elif cat == MISSILE_CATEGORY:
+                total_launches += 1
+                current_launch_time = event["alert_dt"]
+                
+                if in_shelter:
+                    if first_launch_in_window is None:
+                        # First launch in this shelter window
+                        first_launch_in_window = current_launch_time
+                        duration = (first_launch_in_window - shelter_start).total_seconds()
+                        
+                        # Only include reasonable durations (1 minute to 30 minutes)
+                        if 60 <= duration <= 1800:
+                            durations.append({
+                                "settlement": settlement,
+                                "warning_time": shelter_start,
+                                "launch_time": first_launch_in_window,
+                                "duration_seconds": duration
+                            })
+                        last_launch_time = current_launch_time
+                else:
+                    # Launch without advance warning (outside shelter window)
+                    # Only count if 10+ minutes passed since last launch (new event)
+                    if last_launch_time is None:
+                        launches_without_warning_count += 1
+                        last_launch_time = current_launch_time
+                    else:
+                        time_since_last = (current_launch_time - last_launch_time).total_seconds()
+                        if time_since_last >= 600:  # 10 minutes
+                            launches_without_warning_count += 1
+                        last_launch_time = current_launch_time
+                    
+            elif cat == MISSILE_CATEGORY_END and in_shelter:
+                # End of shelter window
+                in_shelter = False
+                shelter_start = None
+                first_launch_in_window = None
+    
+    result_df = pd.DataFrame(durations)
+    # Store metadata for display
+    if not result_df.empty:
+        result_df.attrs['launches_without_warning'] = launches_without_warning_count
+        result_df.attrs['total_launches'] = total_launches
+    
+    return result_df
 
 
 def filter_frame(df: pd.DataFrame) -> pd.DataFrame:
@@ -176,6 +275,38 @@ def main() -> None:
     c2.metric("יישובים ייחודיים", f"{filtered['settlement'].nunique():,}")
     peak_hour = filtered.groupby("hour").size().sort_values(ascending=False).index[0]
     c3.metric("שעת שיא", f"{int(peak_hour):02d}:00")
+
+    # Calculate alert durations
+    durations_df = calculate_alert_durations(df)
+    
+    if not durations_df.empty:
+        st.subheader("⏰ ניתוח זמני התרעה מקדימה")
+        st.caption("זמן בין התרעה מקדימה (קטגוריה 14 - כניסה למקלט) לשיגור הראשון באותו אירוע")
+        
+        avg_duration = durations_df["duration_seconds"].mean()
+        min_duration = durations_df["duration_seconds"].min()
+        max_duration = durations_df["duration_seconds"].max()
+        
+        # Get metadata
+        launches_without_warning = durations_df.attrs.get('launches_without_warning', 0)
+        total_launches = durations_df.attrs.get('total_launches', 0)
+        launches_with_warning = len(durations_df)
+        
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("אירועי התרעה מקדימה", f"{launches_with_warning:,}")
+        col2.metric("שיגורים ללא התרעה מקדימה", f"{launches_without_warning:,}")
+        col3.metric("זמן ממוצע להתרעה", f"{avg_duration/60:.1f} דקות")
+        col4.metric("טווח זמנים", f"{min_duration/60:.0f}-{max_duration/60:.0f} דקות")
+        
+        # Detailed explanation
+        coverage_pct = (launches_with_warning / total_launches * 100) if total_launches > 0 else 0
+        st.info(
+            f"📊 **ממצאים**: מתוך {total_launches:,} שיגורים סה\"כ, "
+            f"{launches_with_warning:,} ({coverage_pct:.1f}%) היו באירועי התרעה מקדימה ו-"
+            f"{launches_without_warning:,} ({100-coverage_pct:.1f}%) היו ללא התרעה מקדימה. "
+            f"הזמן הממוצע מההתרעה המקדימה לשיגור הראשון הוא **{avg_duration/60:.1f} דקות** "
+            f"(טווח: {min_duration/60:.0f}-{max_duration/60:.0f} דקות)."
+        )
 
     draw_charts(filtered)
 

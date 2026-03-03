@@ -453,6 +453,116 @@ function countSheltersWithoutThreats(rows, settlement) {
   return { shelters_without_threats: withoutThreats, total_shelter_entries: totalEntries };
 }
 
+function calculateAdvanceWarningStats(rows) {
+  // Calculate time between advance warning (category 14) and first launch (category 1) in that shelter period
+  // Only counts the FIRST launch in each 14->13 window
+  // Launches outside 14->13 windows AND with 10+ min gap from previous launch = launches without advance warning
+  
+  const bySettlement = {};
+  
+  // Group by settlement
+  rows.forEach((r) => {
+    if (!bySettlement[r.settlement]) {
+      bySettlement[r.settlement] = [];
+    }
+    bySettlement[r.settlement].push(r);
+  });
+  
+  const durations = [];
+  let launchesWithoutWarning = 0;
+  let totalLaunches = 0;
+  
+  // For each settlement, find shelter windows (14->13) and first launch in each
+  Object.keys(bySettlement).forEach((settlement) => {
+    const events = bySettlement[settlement].sort((a, b) => a.alert_dt - b.alert_dt);
+    
+    let inShelter = false;
+    let shelterStart = null;
+    let firstLaunchInWindow = null;
+    let lastLaunchTime = null;
+    
+    events.forEach((event) => {
+      const cat = event.category;
+      
+      // Start of shelter window (advance warning - category 14)
+      if (cat === 14 && !inShelter) {
+        inShelter = true;
+        shelterStart = event.alert_dt;
+        firstLaunchInWindow = null;
+      }
+      // Launch (category 1)
+      else if (cat === 1) {
+        totalLaunches++;
+        const currentLaunchTime = event.alert_dt;
+        
+        if (inShelter) {
+          if (firstLaunchInWindow === null) {
+            // First launch in this shelter window
+            firstLaunchInWindow = currentLaunchTime;
+            const durationSeconds = (firstLaunchInWindow.getTime() - shelterStart.getTime()) / 1000;
+            
+            // Only include reasonable durations (1 minute to 30 minutes)
+            if (durationSeconds >= 60 && durationSeconds <= 1800) {
+              durations.push({
+                settlement: settlement,
+                warningTime: shelterStart,
+                launchTime: firstLaunchInWindow,
+                durationSeconds: durationSeconds
+              });
+            }
+            lastLaunchTime = currentLaunchTime;
+          }
+          // Subsequent launches in same window are ignored
+        } else {
+          // Launch without advance warning (outside shelter window)
+          // Only count if 10+ minutes passed since last launch (new event)
+          if (lastLaunchTime === null) {
+            launchesWithoutWarning++;
+            lastLaunchTime = currentLaunchTime;
+          } else {
+            const timeSinceLast = (currentLaunchTime.getTime() - lastLaunchTime.getTime()) / 1000;
+            if (timeSinceLast >= 600) {  // 10 minutes
+              launchesWithoutWarning++;
+            }
+            lastLaunchTime = currentLaunchTime;
+          }
+        }
+      }
+      // End of shelter window (all clear - category 13)
+      else if (cat === 13 && inShelter) {
+        inShelter = false;
+        shelterStart = null;
+        firstLaunchInWindow = null;
+      }
+    });
+  });
+  
+  if (durations.length === 0) {
+    return {
+      count: 0,
+      launchesWithoutWarning: launchesWithoutWarning,
+      totalLaunches: totalLaunches,
+      avgMinutes: 0,
+      minMinutes: 0,
+      maxMinutes: 0
+    };
+  }
+  
+  const durationMinutes = durations.map((d) => d.durationSeconds / 60);
+  const avgMinutes = durationMinutes.reduce((a, b) => a + b, 0) / durationMinutes.length;
+  const minMinutes = Math.min(...durationMinutes);
+  const maxMinutes = Math.max(...durationMinutes);
+  
+  return {
+    count: durations.length,
+    launchesWithoutWarning: launchesWithoutWarning,
+    totalLaunches: totalLaunches,
+    avgMinutes: avgMinutes,
+    minMinutes: minMinutes,
+    maxMinutes: maxMinutes
+  };
+}
+
 function getSettlementStats(summary, stays, settlement, allRows) {
   if (!settlement) return { 
     settlement: null, 
@@ -463,7 +573,12 @@ function getSettlementStats(summary, stays, settlement, allRows) {
     longest_stay_start: null, 
     longest_stay_end: null,
     shelters_without_threats: 0,
-    total_shelter_entries: 0
+    total_shelter_entries: 0,
+    advance_warning_count: 0,
+    launches_without_warning: 0,
+    avg_warning_minutes: 0,
+    min_warning_minutes: 0,
+    max_warning_minutes: 0
   };
   
   const row = summary.find((x) => x.settlement === settlement);
@@ -478,7 +593,12 @@ function getSettlementStats(summary, stays, settlement, allRows) {
     longest_stay_start: null, 
     longest_stay_end: null,
     shelters_without_threats: 0,
-    total_shelter_entries: 0
+    total_shelter_entries: 0,
+    advance_warning_count: 0,
+    launches_without_warning: 0,
+    avg_warning_minutes: 0,
+    min_warning_minutes: 0,
+    max_warning_minutes: 0
   };
   
   const longest = subset[0];
@@ -494,6 +614,10 @@ function getSettlementStats(summary, stays, settlement, allRows) {
 
   // Calculate shelters without threats
   const withoutThreatsData = countSheltersWithoutThreats(allRows, settlement);
+  
+  // Calculate advance warning stats for this settlement only
+  const settlementRows = allRows.filter((r) => r.settlement === settlement);
+  const warningStats = calculateAdvanceWarningStats(settlementRows);
 
   return {
     settlement,
@@ -505,6 +629,11 @@ function getSettlementStats(summary, stays, settlement, allRows) {
     longest_stay_end: longest ? toDt(longest.end_dt) : null,
     shelters_without_threats: withoutThreatsData.shelters_without_threats,
     total_shelter_entries: withoutThreatsData.total_shelter_entries,
+    advance_warning_count: warningStats.count,
+    launches_without_warning: warningStats.launchesWithoutWarning,
+    avg_warning_minutes: warningStats.avgMinutes,
+    min_warning_minutes: warningStats.minMinutes,
+    max_warning_minutes: warningStats.maxMinutes,
   };
 }
 
@@ -640,14 +769,33 @@ function renderCompareSettlementStats(targetId, stats) {
   const percentage = totalEntries > 0 ? Math.round((withoutThreats / totalEntries) * 100) : 0;
   const withoutThreatsText = totalEntries > 0 ? `${withoutThreats} מתוך ${totalEntries} (${percentage}%)` : "-";
   
+  // Advance warning stats
+  const warningCount = stats?.advance_warning_count || 0;
+  const launchesWithoutWarning = stats?.launches_without_warning || 0;
+  const avgWarning = stats?.avg_warning_minutes || 0;
+  const minWarning = stats?.min_warning_minutes || 0;
+  const maxWarning = stats?.max_warning_minutes || 0;
+  
+  const warningText = warningCount > 0 
+    ? `${warningCount.toLocaleString("he-IL")} אירועים (ממוצע: ${avgWarning.toFixed(1)} דקות)`
+    : "-";
+  const noWarningText = launchesWithoutWarning > 0 
+    ? launchesWithoutWarning.toLocaleString("he-IL")
+    : "0";
+  
   $(targetId).innerHTML = `
     <div><strong>יישוב:</strong> ${settlement}</div>
-    <div><strong>סה"כ זמן:</strong> ${formatMinutesToHHMM(stats?.total_shelter_minutes || 0)}</div>
+    <div style="border-top: 1px solid #ddd; margin-top: 8px; padding-top: 8px;"><em>סטטיסטיקות מקלט:</em></div>
+    <div><strong>סה"כ זמן במקלט:</strong> ${formatMinutesToHHMM(stats?.total_shelter_minutes || 0)}</div>
     <div><strong>ממוצע לשהייה:</strong> ${formatMinutesToHHMM(stats?.avg_stay_minutes || 0)}</div>
     <div><strong>מספר שהיות:</strong> ${Number(stats?.stay_count || 0).toLocaleString("he-IL")}</div>
     <div><strong>כניסות ללא שיגור:</strong> ${withoutThreatsText}</div>
     <div><strong>שהייה ארוכה:</strong> ${formatMinutesToHHMM(stats?.longest_stay_minutes || 0)}</div>
     <div><strong>מתי:</strong> ${stats?.longest_stay_start && stats?.longest_stay_end ? `${stats.longest_stay_start} עד ${stats.longest_stay_end}` : "-"}</div>
+    <div style="border-top: 1px solid #ddd; margin-top: 8px; padding-top: 8px;"><em>התרעות מקדימות:</em></div>
+    <div><strong>אירועי התרעה מקדימה:</strong> ${warningText}</div>
+    <div><strong>שיגורים ללא התרעה:</strong> ${noWarningText}</div>
+    ${warningCount > 0 ? `<div><strong>טווח זמנים:</strong> ${minWarning.toFixed(0)}-${maxWarning.toFixed(0)} דקות</div>` : ''}
   `;
 }
 
@@ -782,6 +930,31 @@ function runDashboard() {
     $("mExit").textContent = Number(typeCounts.shelter_exit || 0).toLocaleString("he-IL");
     $("mAircraft").textContent = Number(typeCounts.aircraft || 0).toLocaleString("he-IL");
     renderFocusedSettlementStats(selectedStats);
+
+    // Calculate and display advance warning stats
+    const warningStats = calculateAdvanceWarningStats(afterDuration);
+    if (warningStats.count > 0) {
+      $("advanceWarningCount").textContent = warningStats.count.toLocaleString("he-IL");
+      $("launchesWithoutWarning").textContent = warningStats.launchesWithoutWarning.toLocaleString("he-IL");
+      $("avgWarningTime").textContent = `${warningStats.avgMinutes.toFixed(1)} דקות`;
+      $("warningTimeRange").textContent = `${warningStats.minMinutes.toFixed(0)}-${warningStats.maxMinutes.toFixed(0)} דקות`;
+      
+      const coveragePct = ((warningStats.count / warningStats.totalLaunches) * 100).toFixed(1);
+      const withoutWarningPct = ((warningStats.launchesWithoutWarning / warningStats.totalLaunches) * 100).toFixed(1);
+      $("warningDetails").innerHTML = `
+        📊 <strong>ממצאים:</strong> מתוך ${warningStats.totalLaunches.toLocaleString("he-IL")} שיגורים סה"כ, 
+        ${warningStats.count.toLocaleString("he-IL")} (${coveragePct}%) היו באירועי התרעה מקדימה ו-
+        ${warningStats.launchesWithoutWarning.toLocaleString("he-IL")} (${withoutWarningPct}%) היו ללא התרעה מקדימה. 
+        הזמן הממוצע מההתרעה המקדימה לשיגור הראשון הוא <strong>${warningStats.avgMinutes.toFixed(1)} דקות</strong> 
+        (טווח: ${warningStats.minMinutes.toFixed(0)}-${warningStats.maxMinutes.toFixed(0)} דקות).
+      `;
+    } else {
+      $("advanceWarningCount").textContent = "0";
+      $("launchesWithoutWarning").textContent = warningStats.launchesWithoutWarning.toLocaleString("he-IL");
+      $("avgWarningTime").textContent = "-";
+      $("warningTimeRange").textContent = "-";
+      $("warningDetails").textContent = "לא נמצאו אירועי התרעה מקדימה בטווח הזמן הנבחר.";
+    }
 
     destroyCharts();
     launchByHourChart = drawBar("launchByHourChart", launchByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), launchByHour.map((x) => x.count), "שיגורים לפי שעה", "#0f8b4c");
