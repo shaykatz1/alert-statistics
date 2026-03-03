@@ -209,36 +209,53 @@ function updateRangeVisibility() {
 }
 
 function prepareRows(rows) {
-  const allRows = rows
-    .map((r) => {
-      const dt = new Date((r.alertDate || "").replace(" ", "T"));
-      const category = Number(r.category || 0);
-      const alert_type = classifyAlert(r.title || "", category);
-      return {
-        settlement: String(r.data || "").trim(),
-        title: String(r.title || ""),
-        category,
-        alert_dt: dt,
-        alert_type,
-      };
-    })
-    .filter((r) => !Number.isNaN(r.alert_dt.getTime()))
-    .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
+  // Process in chunks to avoid stack overflow on mobile devices
+  const CHUNK_SIZE = 5000;
+  const allRows = [];
+  
+  for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+    const chunk = rows.slice(i, i + CHUNK_SIZE);
+    const processed = chunk
+      .map((r) => {
+        const dt = new Date((r.alertDate || "").replace(" ", "T"));
+        const category = Number(r.category || 0);
+        const alert_type = classifyAlert(r.title || "", category);
+        return {
+          settlement: String(r.data || "").trim(),
+          title: String(r.title || ""),
+          category,
+          alert_dt: dt,
+          alert_type,
+        };
+      })
+      .filter((r) => !Number.isNaN(r.alert_dt.getTime()))
+      .filter((r) => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
+    
+    allRows.push(...processed);
+  }
   
   if (allRows.length === 0) {
     return [];
   }
   
-  // Find the actual date range in the data
-  const dates = allRows.map(r => r.alert_dt).sort((a, b) => a - b);
-  const maxDate = dates[dates.length - 1];
+  // Find max date more efficiently without creating a full sorted array
+  let maxDate = allRows[0].alert_dt;
+  for (let i = 1; i < allRows.length; i++) {
+    if (allRows[i].alert_dt > maxDate) {
+      maxDate = allRows[i].alert_dt;
+    }
+  }
   
   // Default to last 7 days of the data
   const weekAgoFromData = new Date(maxDate.getTime() - 7 * 24 * 60 * 60 * 1000);
   
   const filtered = allRows.filter((r) => r.alert_dt >= weekAgoFromData && r.alert_dt <= maxDate);
   
-  return filtered.map((r) => {
+  // Process final mapping in chunks
+  const result = [];
+  for (let i = 0; i < filtered.length; i += CHUNK_SIZE) {
+    const chunk = filtered.slice(i, i + CHUNK_SIZE);
+    const mapped = chunk.map((r) => {
       const yyyy = r.alert_dt.getFullYear();
       const mm = String(r.alert_dt.getMonth() + 1).padStart(2, "0");
       const dd = String(r.alert_dt.getDate()).padStart(2, "0");
@@ -255,6 +272,10 @@ function prepareRows(rows) {
         event_key: `${datetime}|${r.title}|${r.category}`,
       };
     });
+    result.push(...mapped);
+  }
+  
+  return result;
 }
 
 function applyRangeFilter(rows) {
@@ -656,123 +677,164 @@ function destroyCharts() {
 }
 
 function runDashboard() {
-  const prepared = prepareRows(rawRows);
-  const availableSettlements = Array.from(new Set(prepared.map((r) => r.settlement))).filter(Boolean).sort();
+  try {
+    console.log("Starting dashboard render...");
+    const prepared = prepareRows(rawRows);
+    console.log(`Prepared ${prepared.length} rows`);
+    
+    const availableSettlements = Array.from(new Set(prepared.map((r) => r.settlement))).filter(Boolean).sort();
 
-  if (!$("settlementSelect").dataset.filled) {
-    setupAutocomplete($("settlementSelect"), availableSettlements);
-    setupAutocomplete($("compareSettlementA"), availableSettlements);
-    setupAutocomplete($("compareSettlementB"), availableSettlements);
-    const dates = Array.from(new Set(prepared.map((r) => r.date))).sort();
-    if (dates.length) {
-      $("startDate").value = dates[0];
-      $("endDate").value = dates[dates.length - 1];
+    if (!$("settlementSelect").dataset.filled) {
+      setupAutocomplete($("settlementSelect"), availableSettlements);
+      setupAutocomplete($("compareSettlementA"), availableSettlements);
+      setupAutocomplete($("compareSettlementB"), availableSettlements);
+      const dates = Array.from(new Set(prepared.map((r) => r.date))).sort();
+      if (dates.length) {
+        $("startDate").value = dates[0];
+        $("endDate").value = dates[dates.length - 1];
+      }
+      $("settlementSelect").dataset.filled = "1";
     }
-    $("settlementSelect").dataset.filled = "1";
+
+    const { rows: baseFiltered, rangeStart, rangeEnd } = applyRangeFilter(prepared);
+    const stays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
+    const shelterSummary = summarizeShelter(stays);
+
+    // Check for optional filter elements
+    const minShelterEl = $("minShelterMinutes");
+    const maxShelterEl = $("maxShelterMinutes");
+    let afterDuration = baseFiltered;
+    let staysAfterDuration = stays;
+    
+    if (minShelterEl || maxShelterEl) {
+      const minShelter = minShelterEl ? Math.max(0, Number(minShelterEl.value || 0)) : 0;
+      const maxShelter = maxShelterEl ? Number(maxShelterEl.value || -1) : -1;
+      let allowedSettlements = new Set(shelterSummary.filter((s) => s.shelter_minutes >= minShelter && (maxShelter < 0 || s.shelter_minutes <= maxShelter)).map((s) => s.settlement));
+      afterDuration = baseFiltered.filter((r) => allowedSettlements.has(r.settlement));
+      staysAfterDuration = stays.filter((s) => allowedSettlements.has(s.settlement));
+    }
+
+    const selectedSettlement = $("settlementSelect").getSelectedValue ? $("settlementSelect").getSelectedValue() : $("settlementSelect").value;
+    if (selectedSettlement) {
+      afterDuration = afterDuration.filter((r) => r.settlement === selectedSettlement);
+      staysAfterDuration = staysAfterDuration.filter((s) => s.settlement === selectedSettlement);
+    }
+
+    // Check for optional type filter
+    const typeSelectEl = $("typeSelect");
+    let filteredForEvents = afterDuration;
+    if (typeSelectEl) {
+      const selectedTypes = selectedValues(typeSelectEl);
+      filteredForEvents = selectedTypes.length ? afterDuration.filter((r) => selectedTypes.includes(r.alert_type)) : afterDuration;
+    }
+
+    const uniq = uniqueEvents(filteredForEvents);
+    const typeCounts = { launch: 0, shelter_enter: 0, shelter_exit: 0, aircraft: 0, infiltration: 0 };
+    uniq.forEach((e) => { typeCounts[e.alert_type] = (typeCounts[e.alert_type] || 0) + 1; });
+
+    const launchByHour = hourlyCountsFromEvents(uniqueEvents(afterDuration.filter((r) => r.alert_type === "launch")));
+    const aircraftByHour = hourlyCountsFromEvents(uniqueEvents(afterDuration.filter((r) => r.alert_type === "aircraft")));
+    const shelterByHour = hourlyShelterMinutes(staysAfterDuration);
+
+    const statsSettlement = selectedSettlement || null;
+    const selectedStats = getSettlementStats(shelterSummary, stays, statsSettlement, baseFiltered);
+
+    const compareA = $("compareSettlementA").getSelectedValue ? $("compareSettlementA").getSelectedValue() : $("compareSettlementA").value;
+    const compareB = $("compareSettlementB").getSelectedValue ? $("compareSettlementB").getSelectedValue() : $("compareSettlementB").value;
+    const pairRows = baseFiltered.filter((r) => r.settlement === compareA || r.settlement === compareB);
+    const pairStays = stays.filter((s) => s.settlement === compareA || s.settlement === compareB);
+    const pairLaunchUnique = uniqueEvents(pairRows.filter((r) => r.alert_type === "launch"));
+
+    const launchTotals = [
+      { settlement: compareA, count: pairLaunchUnique.filter((x) => x.settlements.includes(compareA)).length },
+      { settlement: compareB, count: pairLaunchUnique.filter((x) => x.settlements.includes(compareB)).length },
+    ];
+
+    const shelterMinutesBySettlement = new Map();
+    pairStays.forEach((s) => shelterMinutesBySettlement.set(s.settlement, (shelterMinutesBySettlement.get(s.settlement) || 0) + s.duration_minutes));
+    const shelterTotals = [
+      { settlement: compareA, minutes: Math.round(shelterMinutesBySettlement.get(compareA) || 0) },
+      { settlement: compareB, minutes: Math.round(shelterMinutesBySettlement.get(compareB) || 0) },
+    ];
+
+    const pairHourly = compareHourlyTwo(baseFiltered, stays, compareA, compareB);
+    const compareStatsA = getSettlementStats(shelterSummary, stays, compareA || null, baseFiltered);
+    const compareStatsB = getSettlementStats(shelterSummary, stays, compareB || null, baseFiltered);
+
+    $("mLaunch").textContent = Number(typeCounts.launch || 0).toLocaleString("he-IL");
+    $("mEnter").textContent = Number(typeCounts.shelter_enter || 0).toLocaleString("he-IL");
+    $("mExit").textContent = Number(typeCounts.shelter_exit || 0).toLocaleString("he-IL");
+    $("mAircraft").textContent = Number(typeCounts.aircraft || 0).toLocaleString("he-IL");
+    renderFocusedSettlementStats(selectedStats);
+
+    destroyCharts();
+    launchByHourChart = drawBar("launchByHourChart", launchByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), launchByHour.map((x) => x.count), "שיגורים לפי שעה", "#0f8b4c");
+    shelterByHourChart = drawBar("shelterByHourChart", shelterByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), shelterByHour.map((x) => x.minutes), "שהייה במרחב מוגן לפי שעה", "#2c6e49");
+    aircraftByHourChart = drawBar("aircraftByHourChart", aircraftByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), aircraftByHour.map((x) => x.count), "כלי טיס לפי שעה", "#20639b");
+
+    compareTwoLaunchTotalsChart = drawBar("compareTwoLaunchTotalsChart", launchTotals.map((x) => x.settlement), launchTotals.map((x) => x.count), "כמות שיגורים כוללת", "#0f8b4c");
+    compareTwoShelterTotalsChart = drawBar("compareTwoShelterTotalsChart", shelterTotals.map((x) => x.settlement), shelterTotals.map((x) => x.minutes), "זמן שהיה כולל (דקות)", "#20639b");
+
+    compareTwoHourlyLaunchesChart = drawHourlyTwoSettlements("compareTwoHourlyLaunchesChart", pairHourly.launches, compareA, compareB, "count");
+    compareTwoHourlyShelterChart = drawHourlyTwoSettlements("compareTwoHourlyShelterChart", pairHourly.shelter, compareA, compareB, "minutes");
+
+    renderCompareSettlementStats("compareStatsA", compareStatsA);
+    renderCompareSettlementStats("compareStatsB", compareStatsB);
+    renderTable(uniq.sort((a, b) => (a.datetime < b.datetime ? 1 : -1)));
+
+    const csv = toCsv(uniq);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    $("csvLink").href = URL.createObjectURL(blob);
+    $("csvLink").download = "oref_alerts_last_7_days_unique_events.csv";
+    
+    console.log("Dashboard rendered successfully");
+  } catch (e) {
+    console.error("Error in runDashboard:", e);
+    alert(`שגיאה בעיבוד הנתונים: ${e.message || e}`);
   }
-
-  const { rows: baseFiltered, rangeStart, rangeEnd } = applyRangeFilter(prepared);
-  const stays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
-  const shelterSummary = summarizeShelter(stays);
-
-  const minShelter = Math.max(0, Number($("minShelterMinutes").value || 0));
-  const maxShelter = Number($("maxShelterMinutes").value || -1);
-  let allowedSettlements = new Set(shelterSummary.filter((s) => s.shelter_minutes >= minShelter && (maxShelter < 0 || s.shelter_minutes <= maxShelter)).map((s) => s.settlement));
-  let afterDuration = baseFiltered.filter((r) => allowedSettlements.has(r.settlement));
-  let staysAfterDuration = stays.filter((s) => allowedSettlements.has(s.settlement));
-
-  const selectedSettlement = $("settlementSelect").getSelectedValue ? $("settlementSelect").getSelectedValue() : $("settlementSelect").value;
-  if (selectedSettlement) {
-    afterDuration = afterDuration.filter((r) => r.settlement === selectedSettlement);
-    staysAfterDuration = staysAfterDuration.filter((s) => s.settlement === selectedSettlement);
-  }
-
-  const selectedTypes = selectedValues($("typeSelect"));
-  const filteredForEvents = selectedTypes.length ? afterDuration.filter((r) => selectedTypes.includes(r.alert_type)) : afterDuration;
-
-  const uniq = uniqueEvents(filteredForEvents);
-  const typeCounts = { launch: 0, shelter_enter: 0, shelter_exit: 0, aircraft: 0, infiltration: 0 };
-  uniq.forEach((e) => { typeCounts[e.alert_type] = (typeCounts[e.alert_type] || 0) + 1; });
-
-  const launchByHour = hourlyCountsFromEvents(uniqueEvents(afterDuration.filter((r) => r.alert_type === "launch")));
-  const aircraftByHour = hourlyCountsFromEvents(uniqueEvents(afterDuration.filter((r) => r.alert_type === "aircraft")));
-  const shelterByHour = hourlyShelterMinutes(staysAfterDuration);
-
-  const statsSettlement = selectedSettlement || null;
-  const selectedStats = getSettlementStats(shelterSummary, stays, statsSettlement, baseFiltered);
-
-  const compareA = $("compareSettlementA").getSelectedValue ? $("compareSettlementA").getSelectedValue() : $("compareSettlementA").value;
-  const compareB = $("compareSettlementB").getSelectedValue ? $("compareSettlementB").getSelectedValue() : $("compareSettlementB").value;
-  const pairRows = baseFiltered.filter((r) => r.settlement === compareA || r.settlement === compareB);
-  const pairStays = stays.filter((s) => s.settlement === compareA || s.settlement === compareB);
-  const pairLaunchUnique = uniqueEvents(pairRows.filter((r) => r.alert_type === "launch"));
-
-  const launchTotals = [
-    { settlement: compareA, count: pairLaunchUnique.filter((x) => x.settlements.includes(compareA)).length },
-    { settlement: compareB, count: pairLaunchUnique.filter((x) => x.settlements.includes(compareB)).length },
-  ];
-
-  const shelterMinutesBySettlement = new Map();
-  pairStays.forEach((s) => shelterMinutesBySettlement.set(s.settlement, (shelterMinutesBySettlement.get(s.settlement) || 0) + s.duration_minutes));
-  const shelterTotals = [
-    { settlement: compareA, minutes: Math.round(shelterMinutesBySettlement.get(compareA) || 0) },
-    { settlement: compareB, minutes: Math.round(shelterMinutesBySettlement.get(compareB) || 0) },
-  ];
-
-  const pairHourly = compareHourlyTwo(baseFiltered, stays, compareA, compareB);
-  const compareStatsA = getSettlementStats(shelterSummary, stays, compareA || null, baseFiltered);
-  const compareStatsB = getSettlementStats(shelterSummary, stays, compareB || null, baseFiltered);
-
-  $("mLaunch").textContent = Number(typeCounts.launch || 0).toLocaleString("he-IL");
-  $("mEnter").textContent = Number(typeCounts.shelter_enter || 0).toLocaleString("he-IL");
-  $("mExit").textContent = Number(typeCounts.shelter_exit || 0).toLocaleString("he-IL");
-  $("mAircraft").textContent = Number(typeCounts.aircraft || 0).toLocaleString("he-IL");
-  renderFocusedSettlementStats(selectedStats);
-
-  destroyCharts();
-  launchByHourChart = drawBar("launchByHourChart", launchByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), launchByHour.map((x) => x.count), "שיגורים לפי שעה", "#0f8b4c");
-  shelterByHourChart = drawBar("shelterByHourChart", shelterByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), shelterByHour.map((x) => x.minutes), "שהייה במרחב מוגן לפי שעה", "#2c6e49");
-  aircraftByHourChart = drawBar("aircraftByHourChart", aircraftByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), aircraftByHour.map((x) => x.count), "כלי טיס לפי שעה", "#20639b");
-
-  compareTwoLaunchTotalsChart = drawBar("compareTwoLaunchTotalsChart", launchTotals.map((x) => x.settlement), launchTotals.map((x) => x.count), "כמות שיגורים כוללת", "#0f8b4c");
-  compareTwoShelterTotalsChart = drawBar("compareTwoShelterTotalsChart", shelterTotals.map((x) => x.settlement), shelterTotals.map((x) => x.minutes), "זמן שהיה כולל (דקות)", "#20639b");
-
-  compareTwoHourlyLaunchesChart = drawHourlyTwoSettlements("compareTwoHourlyLaunchesChart", pairHourly.launches, compareA, compareB, "count");
-  compareTwoHourlyShelterChart = drawHourlyTwoSettlements("compareTwoHourlyShelterChart", pairHourly.shelter, compareA, compareB, "minutes");
-
-  renderCompareSettlementStats("compareStatsA", compareStatsA);
-  renderCompareSettlementStats("compareStatsB", compareStatsB);
-  renderTable(uniq.sort((a, b) => (a.datetime < b.datetime ? 1 : -1)));
-
-  const csv = toCsv(uniq);
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  $("csvLink").href = URL.createObjectURL(blob);
-  $("csvLink").download = "oref_alerts_last_7_days_unique_events.csv";
 }
 
 async function bootstrap() {
-  const [dataRes, metaRes] = await Promise.all([
-    fetch("./data/alerts_history.json", { cache: "no-store" }),
-    fetch("./data/metadata.json", { cache: "no-store" }).catch(() => null),
-  ]);
+  try {
+    const [dataRes, metaRes] = await Promise.all([
+      fetch("./data/alerts_history.json", { cache: "no-store" }),
+      fetch("./data/metadata.json", { cache: "no-store" }).catch(() => null),
+    ]);
 
-  rawRows = await dataRes.json();
-  let metaText = "מקור: snapshot מ-AlertsHistory.json";
-  if (metaRes && metaRes.ok) {
-    const meta = await metaRes.json();
-    const updated = meta.updated_at_utc ? new Date(meta.updated_at_utc).toLocaleString("he-IL") : "-";
-    metaText = `מקור: ${meta.source || "AlertsHistory.json"} | עודכן: ${updated}`;
+    if (!dataRes.ok) {
+      throw new Error(`Failed to load data: ${dataRes.status}`);
+    }
+
+    rawRows = await dataRes.json();
+    
+    // Validate data
+    if (!Array.isArray(rawRows)) {
+      throw new Error("Invalid data format");
+    }
+    
+    console.log(`Loaded ${rawRows.length} alerts`);
+    
+    let metaText = "מקור: snapshot מ-AlertsHistory.json";
+    if (metaRes && metaRes.ok) {
+      const meta = await metaRes.json();
+      const updated = meta.updated_at_utc ? new Date(meta.updated_at_utc).toLocaleString("he-IL") : "-";
+      metaText = `מקור: ${meta.source || "AlertsHistory.json"} | עודכן: ${updated}`;
+    }
+    $("sourceText").textContent = metaText;
+
+    $("rangeMode").addEventListener("change", () => { updateRangeVisibility(); runDashboard(); });
+    $("applyBtn").addEventListener("click", runDashboard);
+    $("compareBtn").addEventListener("click", runDashboard);
+
+    updateRangeVisibility();
+    runDashboard();
+  } catch (e) {
+    console.error("Bootstrap error:", e);
+    throw e;
   }
-  $("sourceText").textContent = metaText;
-
-  $("rangeMode").addEventListener("change", () => { updateRangeVisibility(); runDashboard(); });
-  $("applyBtn").addEventListener("click", runDashboard);
-  $("compareBtn").addEventListener("click", runDashboard);
-
-  updateRangeVisibility();
-  runDashboard();
 }
 
 bootstrap().catch((e) => {
-  alert(`שגיאה בטעינת הנתונים: ${e.message}`);
+  console.error("Fatal error:", e);
+  alert(`שגיאה בטעינת הנתונים: ${e.message || e}`);
 });

@@ -53,3 +53,47 @@ Open browser: `http://localhost:8000`
 - **Streamlit + Flask** - Pull data live from Home Front Command (60 second cache)
 
 **Event Counting:** Events that appear in the same second with the same title across multiple settlements are counted only once.
+
+## Updating Data
+
+### Regular Updates (Last 7 Days)
+
+To update the static site with the latest alerts from the past week:
+
+```bash
+python3 scripts/fetch_alerts_snapshot.py
+```
+
+This fetches data from the Home Front Command API and updates `docs/data/alerts_history.json`.
+
+**Automate with cron:**
+```bash
+# Edit crontab
+crontab -e
+
+# Add this line to update every 2 hours
+0 */2 * * * cd /path/to/ && python3 scripts/fetch_alerts_snapshot.py
+```
+
+### Historical Data (Older Alerts)
+
+To fetch historical data beyond the last 7 days, you can use the historical fetch script:
+
+```bash
+python3 scripts/fetch_historical_correct.py
+```
+
+This script uses the Home Front Command's historical API endpoint to fetch older alerts. Note that historical data availability depends on the API's retention period.
+
+**For specific date ranges:**
+
+Edit the script parameters before running to specify:
+- Start date
+- End date
+- Settlement regions (optional)
+
+The historical data will be saved to `data/` directory and can be merged with current data using:
+
+```bash
+python3 scripts/merge_weekly_data.py
+```
