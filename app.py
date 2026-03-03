@@ -297,16 +297,6 @@ def main() -> None:
         col2.metric("שיגורים ללא התרעה מקדימה", f"{launches_without_warning:,}")
         col3.metric("זמן ממוצע להתרעה", f"{avg_duration/60:.1f} דקות")
         col4.metric("טווח זמנים", f"{min_duration/60:.0f}-{max_duration/60:.0f} דקות")
-        
-        # Detailed explanation
-        coverage_pct = (launches_with_warning / total_launches * 100) if total_launches > 0 else 0
-        st.info(
-            f"📊 **ממצאים**: מתוך {total_launches:,} שיגורים סה\"כ, "
-            f"{launches_with_warning:,} ({coverage_pct:.1f}%) היו באירועי התרעה מקדימה ו-"
-            f"{launches_without_warning:,} ({100-coverage_pct:.1f}%) היו ללא התרעה מקדימה. "
-            f"הזמן הממוצע מההתרעה המקדימה לשיגור הראשון הוא **{avg_duration/60:.1f} דקות** "
-            f"(טווח: {min_duration/60:.0f}-{max_duration/60:.0f} דקות)."
-        )
 
     draw_charts(filtered)
 

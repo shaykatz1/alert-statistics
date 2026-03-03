@@ -7,6 +7,14 @@ let compareTwoLaunchTotalsChart;
 let compareTwoShelterTotalsChart;
 let compareTwoHourlyLaunchesChart;
 let compareTwoHourlyShelterChart;
+let compareTotalShelterMinutesChart;
+let compareAvgStayChart;
+let compareStayCountChart;
+let compareSheltersWithoutThreatsChart;
+let compareAdvanceWarningChart;
+let compareLaunchesWithoutWarningChart;
+let compareAvgWarningTimeChart;
+let compareLongestStayChart;
 
 const $ = (id) => document.getElementById(id);
 
@@ -789,13 +797,13 @@ function renderCompareSettlementStats(targetId, stats) {
     <div><strong>סה"כ זמן במקלט:</strong> ${formatMinutesToHHMM(stats?.total_shelter_minutes || 0)}</div>
     <div><strong>ממוצע לשהייה:</strong> ${formatMinutesToHHMM(stats?.avg_stay_minutes || 0)}</div>
     <div><strong>מספר שהיות:</strong> ${Number(stats?.stay_count || 0).toLocaleString("he-IL")}</div>
-    <div><strong>כניסות ללא שיגור:</strong> ${withoutThreatsText}</div>
+    <div><strong>כניסות למרחב מוגן ללא אזעקה:</strong> ${withoutThreatsText}</div>
     <div><strong>שהייה ארוכה:</strong> ${formatMinutesToHHMM(stats?.longest_stay_minutes || 0)}</div>
     <div><strong>מתי:</strong> ${stats?.longest_stay_start && stats?.longest_stay_end ? `${stats.longest_stay_start} עד ${stats.longest_stay_end}` : "-"}</div>
     <div style="border-top: 1px solid #ddd; margin-top: 8px; padding-top: 8px;"><em>התרעות מקדימות:</em></div>
     <div><strong>אירועי התרעה מקדימה:</strong> ${warningText}</div>
-    <div><strong>שיגורים ללא התרעה:</strong> ${noWarningText}</div>
-    ${warningCount > 0 ? `<div><strong>טווח זמנים:</strong> ${minWarning.toFixed(0)}-${maxWarning.toFixed(0)} דקות</div>` : ''}
+    <div><strong>אזעקה ללא התרעה מקדימה:</strong> ${noWarningText}</div>
+    ${warningCount > 0 ? `<div><strong>טווח זמנים מקבלת התרעה מקדימה ועד אזעקה:</strong> ${minWarning.toFixed(0)}-${maxWarning.toFixed(0)} דקות</div>` : ''}
   `;
 }
 
@@ -837,6 +845,14 @@ function destroyCharts() {
     compareTwoShelterTotalsChart,
     compareTwoHourlyLaunchesChart,
     compareTwoHourlyShelterChart,
+    compareTotalShelterMinutesChart,
+    compareAvgStayChart,
+    compareStayCountChart,
+    compareSheltersWithoutThreatsChart,
+    compareAdvanceWarningChart,
+    compareLaunchesWithoutWarningChart,
+    compareAvgWarningTimeChart,
+    compareLongestStayChart,
   ].forEach((c) => c && c.destroy());
 }
 
@@ -864,19 +880,8 @@ function runDashboard() {
     const stays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
     const shelterSummary = summarizeShelter(stays);
 
-    // Check for optional filter elements
-    const minShelterEl = $("minShelterMinutes");
-    const maxShelterEl = $("maxShelterMinutes");
     let afterDuration = baseFiltered;
     let staysAfterDuration = stays;
-    
-    if (minShelterEl || maxShelterEl) {
-      const minShelter = minShelterEl ? Math.max(0, Number(minShelterEl.value || 0)) : 0;
-      const maxShelter = maxShelterEl ? Number(maxShelterEl.value || -1) : -1;
-      let allowedSettlements = new Set(shelterSummary.filter((s) => s.shelter_minutes >= minShelter && (maxShelter < 0 || s.shelter_minutes <= maxShelter)).map((s) => s.settlement));
-      afterDuration = baseFiltered.filter((r) => allowedSettlements.has(r.settlement));
-      staysAfterDuration = stays.filter((s) => allowedSettlements.has(s.settlement));
-    }
 
     const selectedSettlement = $("settlementSelect").getSelectedValue ? $("settlementSelect").getSelectedValue() : $("settlementSelect").value;
     if (selectedSettlement) {
@@ -884,15 +889,7 @@ function runDashboard() {
       staysAfterDuration = staysAfterDuration.filter((s) => s.settlement === selectedSettlement);
     }
 
-    // Check for optional type filter
-    const typeSelectEl = $("typeSelect");
-    let filteredForEvents = afterDuration;
-    if (typeSelectEl) {
-      const selectedTypes = selectedValues(typeSelectEl);
-      filteredForEvents = selectedTypes.length ? afterDuration.filter((r) => selectedTypes.includes(r.alert_type)) : afterDuration;
-    }
-
-    const uniq = uniqueEvents(filteredForEvents);
+    const uniq = uniqueEvents(afterDuration);
     const typeCounts = { launch: 0, shelter_enter: 0, shelter_exit: 0, aircraft: 0, infiltration: 0 };
     uniq.forEach((e) => { typeCounts[e.alert_type] = (typeCounts[e.alert_type] || 0) + 1; });
 
@@ -926,8 +923,6 @@ function runDashboard() {
     const compareStatsB = getSettlementStats(shelterSummary, stays, compareB || null, baseFiltered);
 
     $("mLaunch").textContent = Number(typeCounts.launch || 0).toLocaleString("he-IL");
-    $("mEnter").textContent = Number(typeCounts.shelter_enter || 0).toLocaleString("he-IL");
-    $("mExit").textContent = Number(typeCounts.shelter_exit || 0).toLocaleString("he-IL");
     $("mAircraft").textContent = Number(typeCounts.aircraft || 0).toLocaleString("he-IL");
     renderFocusedSettlementStats(selectedStats);
 
@@ -938,22 +933,11 @@ function runDashboard() {
       $("launchesWithoutWarning").textContent = warningStats.launchesWithoutWarning.toLocaleString("he-IL");
       $("avgWarningTime").textContent = `${warningStats.avgMinutes.toFixed(1)} דקות`;
       $("warningTimeRange").textContent = `${warningStats.minMinutes.toFixed(0)}-${warningStats.maxMinutes.toFixed(0)} דקות`;
-      
-      const coveragePct = ((warningStats.count / warningStats.totalLaunches) * 100).toFixed(1);
-      const withoutWarningPct = ((warningStats.launchesWithoutWarning / warningStats.totalLaunches) * 100).toFixed(1);
-      $("warningDetails").innerHTML = `
-        📊 <strong>ממצאים:</strong> מתוך ${warningStats.totalLaunches.toLocaleString("he-IL")} שיגורים סה"כ, 
-        ${warningStats.count.toLocaleString("he-IL")} (${coveragePct}%) היו באירועי התרעה מקדימה ו-
-        ${warningStats.launchesWithoutWarning.toLocaleString("he-IL")} (${withoutWarningPct}%) היו ללא התרעה מקדימה. 
-        הזמן הממוצע מההתרעה המקדימה לשיגור הראשון הוא <strong>${warningStats.avgMinutes.toFixed(1)} דקות</strong> 
-        (טווח: ${warningStats.minMinutes.toFixed(0)}-${warningStats.maxMinutes.toFixed(0)} דקות).
-      `;
     } else {
       $("advanceWarningCount").textContent = "0";
       $("launchesWithoutWarning").textContent = warningStats.launchesWithoutWarning.toLocaleString("he-IL");
       $("avgWarningTime").textContent = "-";
       $("warningTimeRange").textContent = "-";
-      $("warningDetails").textContent = "לא נמצאו אירועי התרעה מקדימה בטווח הזמן הנבחר.";
     }
 
     destroyCharts();
@@ -967,17 +951,79 @@ function runDashboard() {
     compareTwoHourlyLaunchesChart = drawHourlyTwoSettlements("compareTwoHourlyLaunchesChart", pairHourly.launches, compareA, compareB, "count");
     compareTwoHourlyShelterChart = drawHourlyTwoSettlements("compareTwoHourlyShelterChart", pairHourly.shelter, compareA, compareB, "minutes");
 
-    renderCompareSettlementStats("compareStatsA", compareStatsA);
-    renderCompareSettlementStats("compareStatsB", compareStatsB);
+    // Additional comparison charts from settlement stats
+    const settlements = [
+      { name: compareStatsA?.settlement || "יישוב א'", stats: compareStatsA },
+      { name: compareStatsB?.settlement || "יישוב ב'", stats: compareStatsB }
+    ];
+    
+    compareTotalShelterMinutesChart = drawBar(
+      "compareTotalShelterMinutesChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.total_shelter_minutes || 0),
+      "סה\"כ זמן במקלט (דקות)",
+      "#2c6e49"
+    );
+    
+    compareAvgStayChart = drawBar(
+      "compareAvgStayChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.avg_stay_minutes || 0),
+      "ממוצע זמן לשהייה (דקות)",
+      "#3498db"
+    );
+    
+    compareStayCountChart = drawBar(
+      "compareStayCountChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.stay_count || 0),
+      "מספר שהיות",
+      "#9b59b6"
+    );
+    
+    compareSheltersWithoutThreatsChart = drawBar(
+      "compareSheltersWithoutThreatsChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.shelters_without_threats || 0),
+      "כניסות למרחב מוגן ללא אזעקה",
+      "#e67e22"
+    );
+    
+    compareAdvanceWarningChart = drawBar(
+      "compareAdvanceWarningChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.advance_warning_count || 0),
+      "אירועי התרעה מקדימה",
+      "#16a085"
+    );
+    
+    compareLaunchesWithoutWarningChart = drawBar(
+      "compareLaunchesWithoutWarningChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.launches_without_warning || 0),
+      "אזעקה ללא התרעה מקדימה",
+      "#c0392b"
+    );
+    
+    compareAvgWarningTimeChart = drawBar(
+      "compareAvgWarningTimeChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.avg_warning_minutes || 0),
+      "ממוצע זמן התרעה מקדימה (דקות)",
+      "#f39c12"
+    );
+    
+    compareLongestStayChart = drawBar(
+      "compareLongestStayChart",
+      settlements.map(s => s.name),
+      settlements.map(s => s.stats?.longest_stay_minutes || 0),
+      "שהייה ארוכה ביותר (דקות)",
+      "#8e44ad"
+    );
     
     // Sort only what we need for the table to avoid memory issues
     const sortedForTable = uniq.slice(0, 500).sort((a, b) => (a.datetime < b.datetime ? 1 : -1));
     renderTable(sortedForTable);
-
-    const csv = toCsv(uniq);
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-    $("csvLink").href = URL.createObjectURL(blob);
-    $("csvLink").download = "oref_alerts_last_7_days_unique_events.csv";
     
     console.log("Dashboard rendered successfully");
   } catch (e) {
