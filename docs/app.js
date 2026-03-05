@@ -3,6 +3,7 @@ let rawRows = [];
 let launchByHourChart;
 let shelterByHourChart;
 let aircraftByHourChart;
+let trendChart;
 let compareTwoLaunchTotalsChart;
 let compareTwoShelterTotalsChart;
 let compareTwoHourlyLaunchesChart;
@@ -834,6 +835,145 @@ function compareHourlyTwo(rows, stays, a, b) {
   return { launches, shelter };
 }
 
+function dailyLaunchCounts(rows) {
+  const map = new Map();
+  const seen = new Set();
+  
+  rows.filter((r) => r.alert_type === "launch").forEach((r) => {
+    const k = r.event_key;
+    if (seen.has(k)) return;
+    seen.add(k);
+    
+    const date = r.date;
+    map.set(date, (map.get(date) || 0) + 1);
+  });
+  
+  const dates = Array.from(map.keys()).sort();
+  return dates.map((date) => ({ date, count: map.get(date) || 0 }));
+}
+
+function dailyShelterMinutes(stays) {
+  const map = new Map();
+  
+  stays.forEach((s) => {
+    let current = new Date(s.start_dt);
+    const end = s.end_dt;
+    
+    while (current < end) {
+      const dateStr = current.toISOString().slice(0, 10);
+      const nextDay = new Date(current);
+      nextDay.setHours(0, 0, 0, 0);
+      nextDay.setDate(nextDay.getDate() + 1);
+      
+      const segmentEnd = end < nextDay ? end : nextDay;
+      const minutes = (segmentEnd - current) / 60000;
+      
+      map.set(dateStr, (map.get(dateStr) || 0) + minutes);
+      current = segmentEnd;
+    }
+  });
+  
+  const dates = Array.from(map.keys()).sort();
+  return dates.map((date) => ({ date, minutes: Math.round(map.get(date) || 0) }));
+}
+
+function drawTrendChart(id, launchData, shelterData) {
+  // Merge dates from both datasets
+  const allDates = new Set([...launchData.map(d => d.date), ...shelterData.map(d => d.date)]);
+  const sortedDates = Array.from(allDates).sort();
+  
+  // Build data arrays aligned by date
+  const launchMap = new Map(launchData.map(d => [d.date, d.count]));
+  const shelterMap = new Map(shelterData.map(d => [d.date, d.minutes]));
+  
+  const launchCounts = sortedDates.map(date => launchMap.get(date) || 0);
+  const shelterMinutes = sortedDates.map(date => shelterMap.get(date) || 0);
+  
+  // Format dates for display (show day/month)
+  const labels = sortedDates.map(date => {
+    const d = new Date(date + 'T00:00:00');
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
+  });
+  
+  return new Chart($(id), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'שיגורים',
+          data: launchCounts,
+          borderColor: '#e74c3c',
+          backgroundColor: 'rgba(231, 76, 60, 0.1)',
+          yAxisID: 'y',
+          tension: 0.3,
+          fill: true
+        },
+        {
+          label: 'זמן במרחב מוגן (דקות)',
+          data: shelterMinutes,
+          borderColor: '#3498db',
+          backgroundColor: 'rgba(52, 152, 219, 0.1)',
+          yAxisID: 'y1',
+          tension: 0.3,
+          fill: true
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      interaction: {
+        mode: 'index',
+        intersect: false
+      },
+      plugins: {
+        legend: {
+          display: true,
+          position: 'top'
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              let label = context.dataset.label || '';
+              if (label) {
+                label += ': ';
+              }
+              label += context.parsed.y;
+              return label;
+            }
+          }
+        }
+      },
+      scales: {
+        y: {
+          type: 'linear',
+          display: true,
+          position: 'right',
+          title: {
+            display: true,
+            text: 'שיגורים'
+          },
+          beginAtZero: true
+        },
+        y1: {
+          type: 'linear',
+          display: true,
+          position: 'left',
+          title: {
+            display: true,
+            text: 'דקות במרחב מוגן'
+          },
+          beginAtZero: true,
+          grid: {
+            drawOnChartArea: false
+          }
+        }
+      }
+    }
+  });
+}
+
 function renderTable(rows) {
   const body = $("rowsBody");
   body.innerHTML = "";
@@ -935,6 +1075,7 @@ function destroyCharts() {
     launchByHourChart,
     shelterByHourChart,
     aircraftByHourChart,
+    trendChart,
     compareTwoLaunchTotalsChart,
     compareTwoShelterTotalsChart,
     compareTwoHourlyLaunchesChart,
@@ -1040,6 +1181,11 @@ function runDashboard() {
     launchByHourChart = drawBar("launchByHourChart", launchByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), launchByHour.map((x) => x.count), "שיגורים לפי שעה", "#0f8b4c");
     shelterByHourChart = drawBar("shelterByHourChart", shelterByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), shelterByHour.map((x) => x.minutes), "שהייה במרחב מוגן לפי שעה", "#2c6e49");
     aircraftByHourChart = drawBar("aircraftByHourChart", aircraftByHour.map((x) => `${String(x.hour).padStart(2, "0")}:00`), aircraftByHour.map((x) => x.count), "כלי טיס לפי שעה", "#20639b");
+
+    // Daily trend chart
+    const dailyLaunches = dailyLaunchCounts(afterDuration);
+    const dailyShelter = dailyShelterMinutes(staysAfterDuration);
+    trendChart = drawTrendChart("trendChart", dailyLaunches, dailyShelter);
 
     compareTwoLaunchTotalsChart = drawBar("compareTwoLaunchTotalsChart", launchTotals.map((x) => x.settlement), launchTotals.map((x) => x.count), "כמות שיגורים כוללת", "#0f8b4c");
     compareTwoShelterTotalsChart = drawBar("compareTwoShelterTotalsChart", shelterTotals.map((x) => x.settlement), shelterTotals.map((x) => x.minutes), "זמן שהיה כולל (דקות)", "#20639b");
