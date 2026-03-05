@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>סטטיסטיקות השוואה בין ישובים</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <main class="container">
+    <section class="hero">
+      <h1>📊 סטטיסטיקות השוואה בין ישובים</h1>
+      <p>רשימות מובילים ונמוכים - איפה הכי הרבה ואיפה הכי פחות התרעות וזמן במרחב מוגן</p>
+      <div style="margin-top: 16px;">
+        <a href="./index.html" style="display: inline-block; background-color: #1976d2; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: 600;">
+          ← חזרה לדף הראשי
+        </a>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="controls">
+        <div>
+          <label>מצב טווח</label>
+          <select id="rangeMode">
+            <option value="week" selected>כל השבוע</option>
+            <option value="last_1d">ביממה האחרונה</option>
+            <option value="last_2d">ביומיים האחרונים</option>
+            <option value="last_3d">בשלושה ימים האחרונים</option>
+            <option value="last_4d">ב-4 ימים האחרונים</option>
+            <option value="custom">תאריכים + שעות</option>
+          </select>
+        </div>
+
+        <div id="customRange" style="display:none;">
+          <label>מתאריך <input id="startDate" type="date" /></label>
+          <label>עד תאריך <input id="endDate" type="date" /></label>
+          <label>משעה <input id="hourFrom" type="number" min="0" max="23" value="0" /></label>
+          <label>עד שעה <input id="hourTo" type="number" min="0" max="23" value="23" /></label>
+        </div>
+
+        <button id="applyBtn">החל סינון</button>
+      </div>
+
+      <div id="loadingIndicator" style="text-align: center; padding: 40px; font-size: 18px; color: #1976d2;">
+        <div>⏳ טוען נתונים...</div>
+        <div style="font-size: 14px; color: #666; margin-top: 10px;">הקובץ גדול, זה יכול לקחת כמה שניות</div>
+      </div>
+
+      <div id="errorIndicator" style="display: none; text-align: center; padding: 40px; font-size: 18px; color: #d32f2f; background: #ffebee; border-radius: 8px;">
+        <div>❌ שגיאה בטעינת נתונים</div>
+        <div id="errorMessage" style="font-size: 14px; margin-top: 10px;"></div>
+      </div>
+
+      <div id="mainContent" style="display: none;">
+        <div class="metrics">
+          <div class="metric"><div class="label">סה"כ ישובים</div><div class="value" id="totalSettlements">-</div></div>
+          <div class="metric"><div class="label">ממוצע שיגורים ליישוב</div><div class="value" id="avgLaunches">-</div></div>
+          <div class="metric"><div class="label">חציון שיגורים</div><div class="value" id="medianLaunches">-</div></div>
+        </div>
+
+      <!-- Top 10 מובילים בשיגורים -->
+      <div class="card" style="margin-top: 24px; border: 2px solid #d32f2f;">
+        <h2 style="margin-top:0; color: #d32f2f;">🔴 ישובים עם הכי הרבה שיגורים</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>יישוב/ים</th>
+                <th>שיגורים</th>
+                <th>זמן במרחב מוגן</th>
+                <th>ממוצע לשהייה</th>
+              </tr>
+            </thead>
+            <tbody id="topLaunchesTable"></tbody>
+          </table>
+        </div>
+        <div id="topLaunchesExpand" style="text-align: center; margin-top: 12px; display: none;">
+          <button onclick="expandTopLaunches()" style="padding: 8px 16px; background: #d32f2f; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+            הצג את כל הישובים ▼
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom 10 נמוכים בשיגורים -->
+      <div class="card" style="margin-top: 24px; border: 2px solid #4caf50;">
+        <h2 style="margin-top:0; color: #4caf50;">🟢 ישובים עם הכי פחות שיגורים</h2>
+        <p style="color: #666; font-size: 14px;">(מציג רק ישובים שהיו להם לפחות שיגור אחד)</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>יישוב/ים</th>
+                <th>שיגורים</th>
+                <th>זמן במרחב מוגן</th>
+                <th>ממוצע לשהייה</th>
+              </tr>
+            </thead>
+            <tbody id="bottomLaunchesTable"></tbody>
+          </table>
+        </div>
+        <div id="bottomLaunchesExpand" style="text-align: center; margin-top: 12px; display: none;">
+          <button onclick="expandBottomLaunches()" style="padding: 8px 16px; background: #4caf50; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+            הצג את כל הישובים ▼
+          </button>
+        </div>
+      </div>
+
+      <!-- Top 10 זמן במרחב מוגן -->
+      <div class="card" style="margin-top: 24px; border: 2px solid #ff6f00;">
+        <h2 style="margin-top:0; color: #ff6f00;">⏰ ישובים עם הכי הרבה זמן במרחב מוגן</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>יישוב/ים</th>
+                <th>זמן במרחב מוגן</th>
+                <th>שיגורים</th>
+                <th>מס' שהיות</th>
+                <th>ממוצע לשהייה</th>
+              </tr>
+            </thead>
+            <tbody id="topShelterTable"></tbody>
+          </table>
+        </div>
+        <div id="topShelterExpand" style="text-align: center; margin-top: 12px; display: none;">
+          <button onclick="expandTopShelter()" style="padding: 8px 16px; background: #ff6f00; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+            הצג את כל הישובים ▼
+          </button>
+        </div>
+      </div>
+
+      <!-- Bottom 10 זמן במרחב מוגן -->
+      <div class="card" style="margin-top: 24px; border: 2px solid #2196f3;">
+        <h2 style="margin-top:0; color: #2196f3;">❄️ ישובים עם הכי פחות זמן במרחב מוגן</h2>
+        <p style="color: #666; font-size: 14px;">(מציג רק ישובים שהיו להם כניסה למרחב מוגן)</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>יישוב/ים</th>
+                <th>זמן במרחב מוגן</th>
+                <th>שיגורים</th>
+                <th>מס' שהיות</th>
+                <th>ממוצע לשהייה</th>
+              </tr>
+            </thead>
+            <tbody id="bottomShelterTable"></tbody>
+          </table>
+        </div>
+        <div id="bottomShelterExpand" style="text-align: center; margin-top: 12px; display: none;">
+          <button onclick="expandBottomShelter()" style="padding: 8px 16px; background: #2196f3; color: white; border: none; border-radius: 4px; cursor: pointer; font-weight: 600;">
+            הצג את כל הישובים ▼
+          </button>
+        </div>
+      </div>
+
+      </div><!-- end mainContent -->
+    </section>
+  </main>
+
+  <script src="./comparison.js"></script>
+</body>
+</html>
