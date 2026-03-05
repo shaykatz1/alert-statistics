@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
-Merge historical monthly data with existing alerts_history.json
-Removes duplicates based on (alertDate, title, data, category)
+Replace existing alerts_history.json with new historical monthly data
+Removes duplicates within the new data based on (alertDate, title, data, category)
 """
 
 import json
 from pathlib import Path
+from datetime import datetime, timezone
 
 EXISTING_FILE = Path("docs/data/alerts_history.json")
 MONTHLY_FILE = Path("data/historical_monthly.json")
 OUTPUT_FILE = Path("docs/data/alerts_history.json")
+METADATA_FILE = Path("docs/data/metadata.json")
 
 def normalize_alert(alert):
     """
@@ -41,15 +43,16 @@ def create_key(alert):
     )
 
 def main():
-    print("🔄 Merging historical data with existing alerts...")
+    print("🔄 Replacing existing data with new historical data...")
     print("=" * 60)
     
-    # Load existing data
+    # Check existing data (for stats only)
+    existing_count = 0
     if EXISTING_FILE.exists():
         existing_data = json.loads(EXISTING_FILE.read_text(encoding='utf-8'))
-        print(f"📂 Loaded {len(existing_data)} existing records")
+        existing_count = len(existing_data)
+        print(f"📂 Found {existing_count} existing records (will be replaced)")
     else:
-        existing_data = []
         print("📂 No existing data found")
     
     # Load monthly data
@@ -63,34 +66,47 @@ def main():
     # Normalize monthly data to existing format
     monthly_data = [normalize_alert(alert) for alert in monthly_data_raw]
     
-    # Merge and deduplicate
+    # Deduplicate new data only
     seen = set()
-    merged_data = []
+    final_data = []
     
-    for record in existing_data + monthly_data:
+    for record in monthly_data:
         key = create_key(record)
         if key not in seen:
             seen.add(key)
-            merged_data.append(record)
+            final_data.append(record)
     
     # Sort by alertDate (most recent first)
-    merged_data.sort(key=lambda x: x.get('alertDate', ''), reverse=True)
+    final_data.sort(key=lambda x: x.get('alertDate', ''), reverse=True)
     
     print(f"\n📊 Statistics:")
-    print(f"   Existing records: {len(existing_data)}")
-    print(f"   Monthly records: {len(monthly_data)}")
-    print(f"   Merged unique: {len(merged_data)}")
-    print(f"   New records added: {len(merged_data) - len(existing_data)}")
+    print(f"   Old records (replaced): {existing_count}")
+    print(f"   New records collected: {len(monthly_data)}")
+    print(f"   New unique records: {len(final_data)}")
+    print(f"   Duplicates removed: {len(monthly_data) - len(final_data)}")
     
-    # Save merged data
+    # Save new data (replacing old)
     OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(
-        json.dumps(merged_data, ensure_ascii=False, indent=0),
+        json.dumps(final_data, ensure_ascii=False, indent=0),
         encoding='utf-8'
     )
     
-    print(f"\n✅ Saved to {OUTPUT_FILE}")
-    print(f"📈 Total unique records: {len(merged_data)}")
+    # Update metadata
+    metadata = {
+        "source": "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json",
+        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "total_records": len(final_data),
+        "replaced_records": existing_count
+    }
+    METADATA_FILE.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2),
+        encoding='utf-8'
+    )
+    
+    print(f"\n✅ Replaced data in {OUTPUT_FILE}")
+    print(f"📈 Total records: {len(final_data)}")
+    print(f"🕒 Updated metadata at: {metadata['updated_at_utc']}")
 
 if __name__ == '__main__':
     main()
