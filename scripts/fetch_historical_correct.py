@@ -49,7 +49,7 @@ def fetch_alerts_by_city(city_name, mode=3):
         print(f"✗ {city_name}: Error - {e}")
         return (False, [])
 
-def fetch_all_cities_historical(mode=2, max_retries=3):
+def fetch_all_cities_historical(mode=3, max_retries=3):
     """
     Fetch historical data for all cities with retry mechanism
     

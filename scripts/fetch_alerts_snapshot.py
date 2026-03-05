@@ -11,6 +11,41 @@ OUT = Path("docs/data/alerts_history.json")
 META = Path("docs/data/metadata.json")
 
 
+def normalize_alert_date(alert):
+    """
+    Normalize alertDate by zeroing out seconds to match historical data format.
+    Historical API returns dates like: 2026-03-05T10:30:00
+    Live API returns dates like: 2026-03-05 10:30:45 (with space, not T)
+    """
+    if "alertDate" in alert and alert["alertDate"]:
+        try:
+            date_str = alert["alertDate"]
+            # Handle both formats: "2026-03-05T10:30:45" and "2026-03-05 10:30:45"
+            if 'T' in date_str:
+                separator = 'T'
+            elif ' ' in date_str:
+                separator = ' '
+            else:
+                return alert  # Unknown format, skip
+            
+            # Split by separator
+            parts = date_str.split(separator)
+            if len(parts) == 2:
+                date_part = parts[0]
+                time_part = parts[1]
+                # Split time by ':'
+                time_components = time_part.split(':')
+                if len(time_components) >= 3:
+                    # Replace seconds with 00
+                    time_components[2] = '00'
+                    # Use T as the standard separator in output
+                    alert["alertDate"] = f"{date_part}T{':'.join(time_components)}"
+        except Exception:
+            # If anything fails, keep original
+            pass
+    return alert
+
+
 def main() -> None:
     # Load existing data if available
     existing_data = []
@@ -63,6 +98,11 @@ def main() -> None:
         raise SystemExit(1)
     
     print(f"Fetched {len(new_data)} new records from API")
+    
+    # Normalize alert dates by zeroing out seconds to match historical data
+    # Need to normalize both existing and new data for proper deduplication
+    existing_data = [normalize_alert_date(alert) for alert in existing_data]
+    new_data = [normalize_alert_date(alert) for alert in new_data]
     
     # Merge data: create a set of tuples for deduplication
     # We use all fields as the unique key
