@@ -251,13 +251,10 @@ function filterData() {
   const now = new Date();
   let filtered = [...rawData];
 
-  // Since operation start - February 28, 2026 00:00:00
+  // All available data - from oldest data point in file to now
   if (mode === "since_operation") {
-    const operationStart = new Date(2026, 1, 28, 0, 0, 0); // Month is 0-indexed, so 1 = February
-    filtered = filtered.filter(r => r.alert_dt >= operationStart);
-  } else if (mode === "week") {
-    const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    filtered = filtered.filter(r => r.alert_dt >= weekAgo);
+    // No filtering - show all data available in the file
+    return filtered;
   } else if (mode.startsWith("last_")) {
     const days = parseInt(mode.split("_")[1].replace("d", ""));
     const daysAgo = new Date(now.getTime() - days * 24 * 60 * 60 * 1000);

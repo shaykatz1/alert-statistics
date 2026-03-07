@@ -258,10 +258,9 @@ function prepareRows(rows) {
     }
   }
   
-  // Default to last 7 days of the data
-  const weekAgoFromData = new Date(maxDate.getTime() - 7 * 24 * 60 * 60 * 1000);
-  
-  const filtered = allRows.filter((r) => r.alert_dt >= weekAgoFromData && r.alert_dt <= maxDate);
+  // Don't filter by date here - let the user's filter selection handle it
+  // This ensures all data is available for any filter mode
+  const filtered = allRows;
   
   // Process final mapping in chunks
   const result = [];
@@ -309,17 +308,15 @@ function applyRangeFilter(rows) {
     maxDateInData = new Date(maxTime);
   }
   
-  // Since operation start - February 28, 2026 00:00:00
+  // All available data - from oldest data point in file to now
   if (mode === "since_operation") {
-    const rangeStart = new Date(2026, 1, 28, 0, 0, 0); // Month is 0-indexed, so 1 = February
+    // No filtering - show all data available in the file
     return {
-      rows: rows.filter((r) => r.alert_dt >= rangeStart && r.alert_dt <= maxDateInData),
-      rangeStart,
-      rangeEnd: maxDateInData,
+      rows,
+      rangeStart: null,
+      rangeEnd: null,
     };
   }
-  
-  if (mode === "week") return { rows, rangeStart: null, rangeEnd: null };
 
   const mapDays = { last_1d: 1, last_2d: 2, last_3d: 3, last_4d: 4 };
   if (mapDays[mode]) {

@@ -67,9 +67,10 @@ def fetch_alerts_history() -> pd.DataFrame:
     df["alert_dt"] = pd.to_datetime(df["alertDate"], format="%Y-%m-%d %H:%M:%S", errors="coerce")
     df = df.dropna(subset=["alert_dt"]).copy()
 
-    # Show last 30 days to include all historical data
-    month_ago = now - timedelta(days=30)
-    df = df[(df["alert_dt"] >= month_ago) & (df["alert_dt"] <= now)].copy()
+    # Load all historical data - no time filtering
+    # (filtering will happen later based on user selection)
+    # month_ago = now - timedelta(days=30)
+    # df = df[(df["alert_dt"] >= month_ago) & (df["alert_dt"] <= now)].copy()
 
     df["alert_type"] = df.apply(lambda r: classify_alert(str(r.get("title", "")), int(r.get("category", 0))), axis=1)
     df = df[df["alert_type"].isin(["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"])].copy()
@@ -104,12 +105,10 @@ def apply_base_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, str, datetime | 
     range_end: datetime | None = None
     now = datetime.now()
 
-    # Since operation start - February 28, 2026 00:00:00
+    # All available data - no date filtering
     if mode == "since_operation":
-        range_start = datetime(2026, 2, 28, 0, 0, 0)
-        range_end = now
-        out = out[(out["alert_dt"] >= range_start) & (out["alert_dt"] <= range_end)]
-        return out, mode, range_start, range_end
+        # Return all data without any date filtering
+        return out, mode, None, now
 
     last_days_map = {
         "last_1d": 1,
