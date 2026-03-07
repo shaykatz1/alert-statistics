@@ -97,12 +97,19 @@ def parse_date(value: str | None) -> date | None:
 
 
 def apply_base_filters(df: pd.DataFrame) -> tuple[pd.DataFrame, str, datetime | None, datetime | None]:
-    mode = request.args.get("mode", default="week", type=str)
+    mode = request.args.get("mode", default="since_operation", type=str)
     out = df.copy()
 
     range_start: datetime | None = None
     range_end: datetime | None = None
     now = datetime.now()
+
+    # Since operation start - February 28, 2026 00:00:00
+    if mode == "since_operation":
+        range_start = datetime(2026, 2, 28, 0, 0, 0)
+        range_end = now
+        out = out[(out["alert_dt"] >= range_start) & (out["alert_dt"] <= range_end)]
+        return out, mode, range_start, range_end
 
     last_days_map = {
         "last_1d": 1,

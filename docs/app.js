@@ -309,6 +309,16 @@ function applyRangeFilter(rows) {
     maxDateInData = new Date(maxTime);
   }
   
+  // Since operation start - February 28, 2026 00:00:00
+  if (mode === "since_operation") {
+    const rangeStart = new Date(2026, 1, 28, 0, 0, 0); // Month is 0-indexed, so 1 = February
+    return {
+      rows: rows.filter((r) => r.alert_dt >= rangeStart && r.alert_dt <= maxDateInData),
+      rangeStart,
+      rangeEnd: maxDateInData,
+    };
+  }
+  
   if (mode === "week") return { rows, rangeStart: null, rangeEnd: null };
 
   const mapDays = { last_1d: 1, last_2d: 2, last_3d: 3, last_4d: 4 };
