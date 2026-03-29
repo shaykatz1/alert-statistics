@@ -8,6 +8,7 @@ Includes retry mechanism for failed cities
 import requests
 import json
 import time
+import os
 from urllib.parse import quote
 from datetime import datetime
 
@@ -146,6 +147,9 @@ def fetch_all_cities_historical(mode=3, max_retries=3):
 
 def save_historical_data(alerts, filename='data/historical_monthly.json'):
     """Save alerts to file"""
+    # Ensure directory exists
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
+    
     with open(filename, 'w', encoding='utf-8') as f:
         json.dump(alerts, f, ensure_ascii=False, indent=2)
     
