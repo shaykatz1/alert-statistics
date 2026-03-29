@@ -150,9 +150,9 @@ def main():
     print(f"   Exact duplicates removed: {exact_duplicates}")
     print(f"   Records after exact dedup: {len(merged_data)}")
     
-    # Remove time-based duplicates (alerts within 2 minutes)
-    print(f"\n📊 Phase 2 - Time-based deduplication (within 2 minutes)...")
-    final_data, time_duplicates = remove_time_duplicates(merged_data, time_threshold_minutes=2)
+    # Remove time-based duplicates (alerts within 1 minute)
+    print(f"\n📊 Phase 2 - Time-based deduplication (within 1 minute)...")
+    final_data, time_duplicates = remove_time_duplicates(merged_data, time_threshold_minutes=1)
     
     # Sort by alertDate (most recent first)
     final_data.sort(key=lambda x: x.get('alertDate', ''), reverse=True)
