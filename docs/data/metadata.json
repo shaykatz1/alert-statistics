@@ -1,6 +1,7 @@
 {
   "source": "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json",
-  "updated_at_utc": "2026-06-07T13:00:17.508980+00:00",
-  "total_records": 434494,
-  "new_records_added": 2
+  "updated_at_utc": "2026-06-07T21:31:24.454014+00:00",
+  "total_records": 437109,
+  "previous_records": 434494,
+  "new_records_added": 2615
 }
