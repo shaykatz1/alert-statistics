@@ -1342,9 +1342,10 @@ async function loadAllAlerts() {
 }
 
 function supabaseRowToRaw(r) {
-  // Convert Supabase row back to the shape the rest of the code expects
+  // Strip UTC offset so the date is parsed as local time (data was originally in Israeli local time)
+  const alertDate = (r.alert_date || "").replace(/\+00:00$|Z$/, "").replace(" ", "T");
   return {
-    alertDate: r.alert_date,
+    alertDate,
     title: r.title,
     data: r.settlement,
     category: r.category,

@@ -367,15 +367,19 @@ async function loadData() {
       if (loadingEl) loadingEl.querySelector?.("span") && (loadingEl.querySelector("span").textContent = `טוען… ${pct}%`);
     });
 
-    rawData = supabaseRows.map(r => ({
-      alertDate: r.alert_date,
-      title: r.title,
-      data: r.settlement,
-      category: r.category,
-      alert_dt: new Date(r.alert_date),
-      alert_type: classifyAlert(r.title, r.category),
-      settlement: r.settlement,
-    })).filter(r => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
+    rawData = supabaseRows.map(r => {
+      // Strip UTC offset so dates are parsed as local time (data was originally in Israeli local time)
+      const alertDate = (r.alert_date || "").replace(/\+00:00$|Z$/, "").replace(" ", "T");
+      return {
+        alertDate,
+        title: r.title,
+        data: r.settlement,
+        category: r.category,
+        alert_dt: new Date(alertDate),
+        alert_type: classifyAlert(r.title, r.category),
+        settlement: r.settlement,
+      };
+    }).filter(r => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
 
     console.log(`✓ Loaded ${rawData.length} relevant alerts from Supabase`);
 
