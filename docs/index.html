@@ -9,6 +9,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  <script src="./config.js"></script>
 </head>
 <body>
   <main class="container">
@@ -22,7 +23,15 @@
       </div>
     </section>
 
-    <section class="card">
+    <div id="loadingOverlay" style="text-align:center;padding:48px 0;">
+      <div style="font-size:18px;font-weight:700;margin-bottom:16px;">טוען נתונים…</div>
+      <div style="background:#e0e0e0;border-radius:8px;height:12px;max-width:400px;margin:0 auto;">
+        <div id="loadingBar" style="background:#1976d2;height:12px;border-radius:8px;width:0%;transition:width 0.3s;"></div>
+      </div>
+      <div id="loadingText" style="margin-top:8px;color:#555;font-size:14px;"></div>
+    </div>
+
+    <section class="card" id="mainContent" style="display:none;">
       <div class="controls">
         <div>
           <label>מצב טווח</label>

@@ -312,42 +312,76 @@ function loadAndRender() {
   renderGeneralStats(stats);
 }
 
+const PAGE_SIZE = 1000;
+
+async function fetchPage(from, to) {
+  const url = `${SUPABASE_URL}/rest/v1/alerts?select=alert_date,title,settlement,category&order=alert_date.desc`;
+  const resp = await fetch(url, {
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      "Range": `${from}-${to}`,
+      "Range-Unit": "items",
+      "Prefer": "count=exact",
+    },
+  });
+  if (!resp.ok) throw new Error(`Supabase error ${resp.status}: ${await resp.text()}`);
+  const contentRange = resp.headers.get("Content-Range") || "";
+  const total = parseInt(contentRange.split("/")[1] || "0", 10);
+  return { rows: await resp.json(), total };
+}
+
+async function loadAllAlerts(onProgress) {
+  const { rows: firstPage, total } = await fetchPage(0, PAGE_SIZE - 1);
+  if (total === 0) return firstPage;
+  onProgress(10, total);
+
+  const pageCount = Math.ceil(total / PAGE_SIZE);
+  const allRows = new Array(pageCount);
+  allRows[0] = firstPage;
+
+  const CONCURRENCY = 20;
+  for (let p = 1; p < pageCount; p += CONCURRENCY) {
+    const batch = [];
+    for (let i = p; i < Math.min(p + CONCURRENCY, pageCount); i++) {
+      batch.push(fetchPage(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1).then(r => { allRows[i] = r.rows; }));
+    }
+    await Promise.all(batch);
+    const loaded = Math.min((p + CONCURRENCY) * PAGE_SIZE, total);
+    onProgress(10 + Math.round((loaded / total) * 85), total);
+  }
+  return allRows.flat();
+}
+
 async function loadData() {
   const loadingEl = $("loadingIndicator");
   const errorEl = $("errorIndicator");
   const mainContentEl = $("mainContent");
-  
+
   try {
     if (loadingEl) loadingEl.style.display = "block";
     if (errorEl) errorEl.style.display = "none";
     if (mainContentEl) mainContentEl.style.display = "none";
-    
-    console.log("Fetching alerts_history.json...");
-    
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-    
-    const response = await fetch("./data/alerts_history.json", { signal: controller.signal });
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    
-    console.log("Parsing JSON...");
-    const rows = await response.json();
-    console.log(`✓ Loaded ${rows.length} records`);
-    
-    rawData = rows.map(row => ({
-      ...row,
-      alert_dt: new Date(row.alertDate),
-      alert_type: classifyAlert(row.title, row.category),
-      settlement: row.data
-    })).filter(row => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(row.alert_type));
 
-    console.log(`✓ Filtered to ${rawData.length} relevant alerts`);
-    
+    const supabaseRows = await loadAllAlerts((pct, total) => {
+      if (loadingEl) loadingEl.querySelector?.("span") && (loadingEl.querySelector("span").textContent = `טוען… ${pct}%`);
+    });
+
+    rawData = supabaseRows.map(r => ({
+      alertDate: r.alert_date,
+      title: r.title,
+      data: r.settlement,
+      category: r.category,
+      alert_dt: new Date(r.alert_date),
+      alert_type: classifyAlert(r.title, r.category),
+      settlement: r.settlement,
+    })).filter(r => ["launch", "shelter_enter", "shelter_exit", "aircraft", "infiltration"].includes(r.alert_type));
+
+    console.log(`✓ Loaded ${rawData.length} relevant alerts from Supabase`);
+
     if (loadingEl) loadingEl.style.display = "none";
     if (mainContentEl) mainContentEl.style.display = "block";
-    
+
     loadAndRender();
   } catch (err) {
     console.error("Failed to load data:", err);
@@ -355,13 +389,7 @@ async function loadData() {
     if (errorEl) {
       errorEl.style.display = "block";
       const msgEl = $("errorMessage");
-      if (msgEl) {
-        if (err.name === 'AbortError') {
-          msgEl.textContent = "הטעינה ארכה יותר מ-60 שניות.";
-        } else {
-          msgEl.textContent = err.message;
-        }
-      }
+      if (msgEl) msgEl.textContent = err.message;
     }
   }
 }

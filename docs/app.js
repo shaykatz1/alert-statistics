@@ -1281,33 +1281,92 @@ function runDashboard() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Supabase data loader — fetches all alerts in parallel pages
+// ---------------------------------------------------------------------------
+
+const PAGE_SIZE = 1000; // Supabase default max; raise in Settings > API if desired
+
+function setProgress(pct, text) {
+  const bar = document.getElementById("loadingBar");
+  const txt = document.getElementById("loadingText");
+  if (bar) bar.style.width = `${pct}%`;
+  if (txt) txt.textContent = text;
+}
+
+async function fetchPage(from, to) {
+  const url = `${SUPABASE_URL}/rest/v1/alerts?select=alert_date,title,settlement,category&order=alert_date.desc`;
+  const resp = await fetch(url, {
+    headers: {
+      "apikey": SUPABASE_ANON_KEY,
+      "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+      "Range": `${from}-${to}`,
+      "Range-Unit": "items",
+      "Prefer": "count=exact",
+    },
+  });
+  if (!resp.ok) throw new Error(`Supabase error ${resp.status}: ${await resp.text()}`);
+
+  const contentRange = resp.headers.get("Content-Range") || "";
+  const total = parseInt(contentRange.split("/")[1] || "0", 10);
+  const rows = await resp.json();
+  return { rows, total };
+}
+
+async function loadAllAlerts() {
+  setProgress(5, "מחשב כמות רשומות…");
+
+  // First request: get total count + first page
+  const { rows: firstPage, total } = await fetchPage(0, PAGE_SIZE - 1);
+  if (total === 0) return firstPage;
+
+  setProgress(10, `נמצאו ${total.toLocaleString("he-IL")} רשומות — טוען…`);
+
+  const pageCount = Math.ceil(total / PAGE_SIZE);
+  const allRows = new Array(pageCount);
+  allRows[0] = firstPage;
+
+  // Fetch remaining pages in parallel batches of 20
+  const CONCURRENCY = 20;
+  for (let p = 1; p < pageCount; p += CONCURRENCY) {
+    const batch = [];
+    for (let i = p; i < Math.min(p + CONCURRENCY, pageCount); i++) {
+      batch.push(fetchPage(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1).then(r => { allRows[i] = r.rows; }));
+    }
+    await Promise.all(batch);
+    const pct = 10 + Math.round((Math.min(p + CONCURRENCY, pageCount) / pageCount) * 85);
+    setProgress(pct, `טוען… ${Math.min(p + CONCURRENCY, pageCount) * PAGE_SIZE > total ? total : (p + CONCURRENCY) * PAGE_SIZE} / ${total.toLocaleString("he-IL")}`);
+  }
+
+  return allRows.flat();
+}
+
+function supabaseRowToRaw(r) {
+  // Convert Supabase row back to the shape the rest of the code expects
+  return {
+    alertDate: r.alert_date,
+    title: r.title,
+    data: r.settlement,
+    category: r.category,
+  };
+}
+
 async function bootstrap() {
   try {
-    const [dataRes, metaRes] = await Promise.all([
-      fetch("./data/alerts_history.json", { cache: "no-store" }),
-      fetch("./data/metadata.json", { cache: "no-store" }).catch(() => null),
-    ]);
+    const supabaseRows = await loadAllAlerts();
+    rawRows = supabaseRows.map(supabaseRowToRaw);
 
-    if (!dataRes.ok) {
-      throw new Error(`Failed to load data: ${dataRes.status}`);
-    }
+    console.log(`Loaded ${rawRows.length} alerts from Supabase`);
+    setProgress(100, "");
 
-    rawRows = await dataRes.json();
-    
-    // Validate data
-    if (!Array.isArray(rawRows)) {
-      throw new Error("Invalid data format");
-    }
-    
-    console.log(`Loaded ${rawRows.length} alerts`);
-    
-    let metaText = "מקור: snapshot מ-AlertsHistory.json";
-    if (metaRes && metaRes.ok) {
-      const meta = await metaRes.json();
-      const updated = meta.updated_at_utc ? new Date(meta.updated_at_utc).toLocaleString("he-IL") : "-";
-      metaText = `מקור: ${meta.source || "AlertsHistory.json"} | עודכן: ${updated}`;
-    }
-    $("sourceText").textContent = metaText;
+    // Hide loader, show content
+    const overlay = document.getElementById("loadingOverlay");
+    const content = document.getElementById("mainContent");
+    if (overlay) overlay.style.display = "none";
+    if (content) content.style.display = "";
+
+    const updated = new Date().toLocaleString("he-IL");
+    $("sourceText").textContent = `מקור: פיקוד העורף (Supabase) | עודכן: ${updated}`;
 
     $("rangeMode").addEventListener("change", () => { updateRangeVisibility(); runDashboard(); });
     $("applyBtn").addEventListener("click", runDashboard);
@@ -1317,11 +1376,9 @@ async function bootstrap() {
     runDashboard();
   } catch (e) {
     console.error("Bootstrap error:", e);
-    throw e;
+    const overlay = document.getElementById("loadingOverlay");
+    if (overlay) overlay.innerHTML = `<div style="color:red;font-size:16px;">שגיאה בטעינת הנתונים: ${e.message || e}</div>`;
   }
 }
 
-bootstrap().catch((e) => {
-  console.error("Fatal error:", e);
-  alert(`שגיאה בטעינת הנתונים: ${e.message || e}`);
-});
+bootstrap();
