@@ -43,16 +43,13 @@ def fetch_oref() -> list[dict]:
         capture_output=True, text=True, check=False,
     )
     if res.returncode != 0:
-        print(f"curl failed: {res.stderr}", file=sys.stderr)
-        raise SystemExit(1)
+        raise RuntimeError(f"curl failed: {res.stderr}")
     payload = res.stdout.lstrip("﻿").strip()
     if not payload:
-        print("Empty response from oref API", file=sys.stderr)
-        raise SystemExit(1)
+        raise RuntimeError("Empty response from oref API (IP may be blocked)")
     data = json.loads(payload)
     if not isinstance(data, list):
-        print(f"Expected list, got {type(data).__name__}", file=sys.stderr)
-        raise SystemExit(1)
+        raise RuntimeError(f"Expected list, got {type(data).__name__}")
     return data
 
 
@@ -160,14 +157,20 @@ def upload_snapshot(client: httpx.Client, rows: list[dict]) -> None:
 
 def main() -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] Fetching from oref.org.il...")
-    raw = fetch_oref()
-    rows = [r for r in (to_row(x) for x in raw) if r]
-    print(f"  {len(raw)} records fetched → {len(rows)} valid rows")
+    try:
+        raw = fetch_oref()
+        rows = [r for r in (to_row(x) for x in raw) if r]
+        print(f"  {len(raw)} records fetched → {len(rows)} valid rows")
+    except (SystemExit, Exception) as e:
+        print(f"  Warning: could not fetch from oref ({e}) — will still rebuild snapshot from DB.")
+        rows = []
 
     with httpx.Client() as client:
         if rows:
             upsert(client, rows)
             print(f"  Upserted {len(rows)} rows into Supabase.")
+        else:
+            print("  No new rows to upsert.")
 
         all_rows = fetch_all_from_db(client)
         upload_snapshot(client, all_rows)
