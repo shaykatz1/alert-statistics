@@ -336,7 +336,9 @@ async function loadAllAlerts(onProgress) {
   try {
     const resp = await fetch(STORAGE_SNAPSHOT_URL + "?t=" + Math.floor(Date.now() / 7200000));
     if (resp.ok) {
-      const rows = await resp.json();
+      const ds = new DecompressionStream("gzip");
+      const decompressed = resp.body.pipeThrough(ds);
+      const rows = await new Response(decompressed).json();
       onProgress(95, rows.length);
       return rows;
     }

@@ -8,6 +8,7 @@ Required env vars:
 """
 from __future__ import annotations
 
+import gzip
 import json
 import os
 import subprocess
@@ -24,7 +25,7 @@ OREF_URL = "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 STORAGE_BUCKET = "snapshots"
-STORAGE_FILE = "alerts_history.json"
+STORAGE_FILE = "alerts_history.json.gz"
 PAGE_SIZE = 10_000
 
 
@@ -134,16 +135,19 @@ def fetch_all_from_db(client: httpx.Client) -> list[dict]:
 
 
 def upload_snapshot(client: httpx.Client, rows: list[dict]) -> None:
-    """Upload the full dataset as a single JSON file to Supabase Storage."""
-    print(f"  Uploading snapshot ({len(rows)} rows) to storage...")
-    payload = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    """Upload the full dataset as a gzip-compressed JSON to Supabase Storage."""
+    print(f"  Compressing snapshot ({len(rows)} rows)...")
+    raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload = gzip.compress(raw, compresslevel=6)
+    print(f"  {len(raw)/1024/1024:.1f} MB → {len(payload)/1024/1024:.1f} MB (gzip)")
 
     resp = client.post(
         f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{STORAGE_FILE}",
         headers={
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
-            "Content-Type": "application/json",
+            "Content-Type": "application/gzip",
+            "Content-Length": str(len(payload)),
             "x-upsert": "true",
             "Cache-Control": "public, max-age=7200",
         },
@@ -151,7 +155,7 @@ def upload_snapshot(client: httpx.Client, rows: list[dict]) -> None:
         timeout=120,
     )
     resp.raise_for_status()
-    print(f"  Snapshot uploaded — {len(payload) / 1024 / 1024:.1f} MB")
+    print(f"  Snapshot uploaded — {len(payload)/1024/1024:.1f} MB")
 
 
 def main() -> None:

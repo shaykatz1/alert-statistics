@@ -1295,10 +1295,12 @@ function setProgress(pct, text) {
 }
 
 async function loadFromStorage() {
-  // Single request — fast when the snapshot exists
   const resp = await fetch(STORAGE_SNAPSHOT_URL + "?t=" + Math.floor(Date.now() / 7200000));
   if (!resp.ok) throw new Error(`Storage ${resp.status}`);
-  return resp.json();
+  // Decompress gzip in the browser using DecompressionStream
+  const ds = new DecompressionStream("gzip");
+  const decompressed = resp.body.pipeThrough(ds);
+  return new Response(decompressed).json();
 }
 
 async function fetchPage(from, to) {
