@@ -116,15 +116,19 @@ def fetch_all_from_db(client: httpx.Client) -> list[dict]:
         )
         resp.raise_for_status()
         batch = resp.json()
+        if not batch:
+            break
         all_rows.extend(batch)
 
         content_range = resp.headers.get("Content-Range", "")
         total = int(content_range.split("/")[1]) if "/" in content_range else len(all_rows)
 
-        print(f"    {len(all_rows)}/{total}")
-        if len(all_rows) >= total or not batch:
+        # Advance by actual rows returned (may be less than PAGE_SIZE if server caps it)
+        offset += len(batch)
+        if offset % 10000 == 0 or offset >= total:
+            print(f"    {len(all_rows)}/{total}")
+        if offset >= total:
             break
-        offset += PAGE_SIZE
 
     return all_rows
 
