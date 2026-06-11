@@ -60,7 +60,7 @@ def to_row(r: dict) -> dict | None:
 
 def upsert_batch(client: httpx.Client, rows: list[dict]) -> None:
     resp = client.post(
-        f"{SUPABASE_URL}/rest/v1/alerts",
+        f"{SUPABASE_URL}/rest/v1/alerts?on_conflict=alert_date,title,settlement,category",
         headers={
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",

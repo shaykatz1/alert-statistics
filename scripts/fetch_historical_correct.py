@@ -45,9 +45,17 @@ def fetch_city(city_name: str, mode: int = 3) -> tuple[bool, list]:
     try:
         resp = requests.get(url, headers=headers, timeout=30)
         resp.raise_for_status()
+        text = resp.text.strip()
+        if not text:
+            # Empty response — skip silently (city may have no alerts)
+            return True, []
         data = resp.json()
         print(f"  ✓ {city_name}: {len(data)} alerts")
         return True, data
+    except requests.exceptions.JSONDecodeError:
+        # Non-JSON response (e.g. Access Denied HTML) — skip
+        print(f"  ✗ {city_name}: invalid response (skipping)")
+        return True, []
     except Exception as e:
         print(f"  ✗ {city_name}: {e}")
         return False, []
@@ -137,7 +145,7 @@ def to_row(r: dict) -> dict | None:
 
 def upsert_batch(client: httpx.Client, rows: list[dict]) -> None:
     resp = client.post(
-        f"{SUPABASE_URL}/rest/v1/alerts",
+        f"{SUPABASE_URL}/rest/v1/alerts?on_conflict=alert_date,title,settlement,category",
         headers={
             "apikey": SUPABASE_KEY,
             "Authorization": f"Bearer {SUPABASE_KEY}",
