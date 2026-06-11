@@ -1,0 +1,15 @@
+name: Test Historical API Access
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test alerts-history.oref.org.il
+        run: |
+          curl -s --max-time 15 \
+            -H "User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" \
+            "https://alerts-history.oref.org.il/Shared/Ajax/GetCitiesMix.aspx?lang=he" \
+            | head -c 300
