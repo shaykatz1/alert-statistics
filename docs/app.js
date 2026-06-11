@@ -1380,8 +1380,19 @@ async function bootstrap() {
     if (overlay) overlay.style.display = "none";
     if (content) content.style.display = "";
 
-    const updated = new Date().toLocaleString("he-IL");
-    $("sourceText").textContent = `מקור: פיקוד העורף (Supabase) | עודכן: ${updated}`;
+    // Show last alert date in the hero badge
+    const latestRow = rawRows.find(r => r.alertDate);
+    if (latestRow) {
+      const latestDt = new Date(latestRow.alertDate.replace(" ", "T"));
+      const formatted = latestDt.toLocaleString("he-IL", {
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit"
+      });
+      const badge = document.getElementById("lastUpdatedBadge");
+      const text = document.getElementById("lastUpdatedText");
+      if (badge && text) { text.textContent = formatted; badge.style.display = "inline-block"; }
+    }
+    $("sourceText").textContent = `מקור: פיקוד העורף`;
 
     $("rangeMode").addEventListener("change", () => { updateRangeVisibility(); runDashboard(); });
     $("applyBtn").addEventListener("click", runDashboard);
