@@ -1,197 +1,154 @@
 #!/usr/bin/env python3
 """
-Merge existing alerts_history.json with new historical monthly data
-Removes duplicates based on (alertDate, title, data, category)
-Preserves old content that doesn't exist in the new historical fetch
+Upload the locally-cached historical data (data/historical_monthly.json)
+to Supabase and rebuild the Storage snapshot.
+
+Run this after fetch_historical_correct.py, or whenever you have a local
+JSON file you want to push to the database.
+
+Required env vars:
+    SUPABASE_URL         https://xxx.supabase.co
+    SUPABASE_SERVICE_KEY service_role secret key
+
+Usage:
+    SUPABASE_URL=... SUPABASE_SERVICE_KEY=... python3 scripts/merge_weekly_data.py
 """
 
+from __future__ import annotations
+
+import gzip
 import json
+import os
+from datetime import datetime, timezone
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
 
-EXISTING_FILE = Path("docs/data/alerts_history.json")
+import httpx
+
 MONTHLY_FILE = Path("data/historical_monthly.json")
-OUTPUT_FILE = Path("docs/data/alerts_history.json")
-METADATA_FILE = Path("docs/data/metadata.json")
+SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
+SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+STORAGE_FILE = "alerts_history.json.gz"
+PAGE_SIZE = 1000
+BATCH_SIZE = 5_000
 
-def normalize_alert(alert):
-    """
-    Convert weekly format to existing format and create dedup key.
-    Weekly format: {data, date, time, alertDate, category, category_desc, matrix_id, rid}
-    Existing format: {alertDate, title, data, category}
-    """
-    # Map category_desc to title
-    title = alert.get('category_desc', '')
-    if title.endswith(' - האירוע הסתיים'):
-        title = title.replace(' - האירוע הסתיים', ' - האירוע הסתיים')
-    elif title.endswith(' -  האירוע הסתיים'):
-        title = title.replace(' -  האירוע הסתיים', ' - האירוע הסתיים')
-    
+
+def normalize_date(s: str) -> str:
+    s = s.replace(" ", "T")
+    parts = s.split("T")
+    if len(parts) == 2:
+        tp = parts[1].split(":")
+        if len(tp) >= 3:
+            tp[2] = "00"
+            return f"{parts[0]}T{':'.join(tp)}"
+    return s
+
+
+def to_row(r: dict) -> dict | None:
+    ad = r.get("alertDate")
+    title = r.get("category_desc") or r.get("title", "")
+    settlement = r.get("data", "")
+    category = r.get("category")
+    if not ad or not title or not settlement or category is None:
+        return None
     return {
-        'alertDate': alert.get('alertDate', ''),
-        'title': title,
-        'data': alert.get('data', ''),
-        'category': alert.get('category', 0)
+        "alert_date": normalize_date(ad),
+        "title": title,
+        "settlement": str(settlement).strip(),
+        "category": int(category),
     }
 
-def create_key(alert):
-    """Create unique key for exact deduplication."""
-    return (
-        alert.get('alertDate', ''),
-        alert.get('title', ''),
-        alert.get('data', ''),
-        alert.get('category', 0)
+
+def upsert_batch(client: httpx.Client, rows: list[dict]) -> None:
+    resp = client.post(
+        f"{SUPABASE_URL}/rest/v1/alerts",
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=ignore-duplicates,return=minimal",
+        },
+        json=rows,
+        timeout=60,
     )
+    resp.raise_for_status()
 
-def create_group_key(alert):
-    """Create group key for time-based deduplication (without timestamp)."""
-    return (
-        alert.get('title', ''),
-        alert.get('data', ''),
-        alert.get('category', 0)
+
+def fetch_all_from_db(client: httpx.Client) -> list[dict]:
+    all_rows: list[dict] = []
+    offset = 0
+    print("  Reading all rows from DB for snapshot...")
+    while True:
+        resp = client.get(
+            f"{SUPABASE_URL}/rest/v1/alerts",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Range-Unit": "items",
+                "Range": f"{offset}-{offset + PAGE_SIZE - 1}",
+                "Prefer": "count=exact",
+            },
+            params={"select": "alert_date,title,settlement,category", "order": "alert_date.desc"},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        batch = resp.json()
+        if not batch:
+            break
+        all_rows.extend(batch)
+        content_range = resp.headers.get("Content-Range", "")
+        total = int(content_range.split("/")[1]) if "/" in content_range else len(all_rows)
+        offset += len(batch)
+        if offset % 50000 == 0 or offset >= total:
+            print(f"    {len(all_rows)}/{total}")
+        if offset >= total:
+            break
+    return all_rows
+
+
+def upload_snapshot(client: httpx.Client, rows: list[dict]) -> None:
+    print(f"  Compressing {len(rows)} rows...")
+    raw = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    payload = gzip.compress(raw, compresslevel=6)
+    print(f"  {len(raw)/1024/1024:.1f} MB → {len(payload)/1024/1024:.1f} MB")
+    resp = client.post(
+        f"{SUPABASE_URL}/storage/v1/object/snapshots/{STORAGE_FILE}",
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/gzip",
+            "Content-Length": str(len(payload)),
+            "x-upsert": "true",
+            "Cache-Control": "public, max-age=7200",
+        },
+        content=payload,
+        timeout=180,
     )
+    resp.raise_for_status()
+    print("  Snapshot uploaded.")
 
-def remove_time_duplicates(alerts, time_threshold_minutes=2):
-    """
-    Remove alerts that are within time_threshold_minutes of each other
-    for the same location/title/category combination.
-    Keeps the earliest occurrence.
-    """
-    from collections import defaultdict
-    
-    # Group alerts by (title, data, category)
-    groups = defaultdict(list)
-    for alert in alerts:
-        key = create_group_key(alert)
-        groups[key].append(alert)
-    
-    # Within each group, remove time duplicates
-    deduplicated = []
-    duplicates_removed = 0
-    
-    for key, group_alerts in groups.items():
-        # Sort by alertDate
-        sorted_alerts = sorted(group_alerts, key=lambda x: x.get('alertDate', ''))
-        
-        # Keep first alert in each time window
-        kept_alerts = []
-        for alert in sorted_alerts:
-            should_keep = True
-            alert_time = None
-            
-            try:
-                alert_time = datetime.fromisoformat(alert['alertDate'].replace('Z', '+00:00'))
-            except:
-                # If we can't parse the time, keep the alert
-                kept_alerts.append(alert)
-                continue
-            
-            # Check if this alert is too close to any kept alert
-            for kept_alert in kept_alerts:
-                try:
-                    kept_time = datetime.fromisoformat(kept_alert['alertDate'].replace('Z', '+00:00'))
-                    diff_minutes = abs((alert_time - kept_time).total_seconds() / 60)
-                    
-                    if diff_minutes <= time_threshold_minutes:
-                        should_keep = False
-                        duplicates_removed += 1
-                        break
-                except:
-                    pass
-            
-            if should_keep:
-                kept_alerts.append(alert)
-        
-        deduplicated.extend(kept_alerts)
-    
-    return deduplicated, duplicates_removed
 
-def main():
-    print("🔄 Merging existing data with new historical data...")
-    print("=" * 60)
-    
-    # Load existing data
-    existing_data = []
-    existing_count = 0
-    if EXISTING_FILE.exists():
-        existing_data = json.loads(EXISTING_FILE.read_text(encoding='utf-8'))
-        existing_count = len(existing_data)
-        print(f"📂 Found {existing_count} existing records")
-    else:
-        print("📂 No existing data found")
-    
-    # Load monthly data
+def main() -> None:
     if not MONTHLY_FILE.exists():
-        print(f"❌ Monthly data file not found: {MONTHLY_FILE}")
+        print(f"File not found: {MONTHLY_FILE}")
+        print("Run fetch_historical_correct.py first.")
         return
-    
-    monthly_data_raw = json.loads(MONTHLY_FILE.read_text(encoding='utf-8'))
-    print(f"📥 Loaded {len(monthly_data_raw)} monthly records")
-    
-    # Normalize monthly data to existing format
-    monthly_data = [normalize_alert(alert) for alert in monthly_data_raw]
-    
-    # Merge existing and new data, removing exact duplicates
-    seen = set()
-    merged_data = []
-    
-    # Process both existing and new data together
-    all_records = existing_data + monthly_data
-    
-    for record in all_records:
-        key = create_key(record)
-        if key not in seen:
-            seen.add(key)
-            merged_data.append(record)
-    
-    exact_duplicates = len(all_records) - len(merged_data)
-    print(f"\n📊 Phase 1 - Exact deduplication:")
-    print(f"   Total records before: {len(all_records)}")
-    print(f"   Exact duplicates removed: {exact_duplicates}")
-    print(f"   Records after exact dedup: {len(merged_data)}")
-    
-    # Remove time-based duplicates (alerts within 1 minute)
-    print(f"\n📊 Phase 2 - Time-based deduplication (within 1 minute)...")
-    final_data, time_duplicates = remove_time_duplicates(merged_data, time_threshold_minutes=1)
-    
-    # Sort by alertDate (most recent first)
-    final_data.sort(key=lambda x: x.get('alertDate', ''), reverse=True)
-    
-    total_duplicates = exact_duplicates + time_duplicates
-    new_records_added = len(final_data) - existing_count
-    
-    print(f"   Time duplicates removed: {time_duplicates}")
-    
-    print(f"\n📊 Final Statistics:")
-    print(f"   Old records: {existing_count}")
-    print(f"   New records collected: {len(monthly_data)}")
-    print(f"   Total after merge: {len(final_data)}")
-    print(f"   Total duplicates removed: {total_duplicates}")
-    print(f"   Net new records added: {new_records_added}")
-    
-    # Save new data (replacing old)
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FILE.write_text(
-        json.dumps(final_data, ensure_ascii=False, indent=0),
-        encoding='utf-8'
-    )
-    
-    # Update metadata
-    metadata = {
-        "source": "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json",
-        "updated_at_utc": datetime.now(timezone.utc).isoformat(),
-        "total_records": len(final_data),
-        "previous_records": existing_count,
-        "new_records_added": new_records_added
-    }
-    METADATA_FILE.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2),
-        encoding='utf-8'
-    )
-    
-    print(f"\n✅ Merged data saved to {OUTPUT_FILE}")
-    print(f"📈 Total records: {len(final_data)}")
-    print(f"🕒 Updated metadata at: {metadata['updated_at_utc']}")
 
-if __name__ == '__main__':
+    raw = json.loads(MONTHLY_FILE.read_text(encoding="utf-8"))
+    rows = [r for r in (to_row(a) for a in raw) if r]
+    print(f"Loaded {len(raw)} records from {MONTHLY_FILE} → {len(rows)} valid rows")
+
+    print(f"Upserting to Supabase...")
+    with httpx.Client() as client:
+        for i in range(0, len(rows), BATCH_SIZE):
+            upsert_batch(client, rows[i: i + BATCH_SIZE])
+            print(f"  {min(i + BATCH_SIZE, len(rows))}/{len(rows)}")
+
+        print("\nRebuilding snapshot...")
+        all_rows = fetch_all_from_db(client)
+        upload_snapshot(client, all_rows)
+
+    print(f"\nDone — {datetime.now(timezone.utc).isoformat()}")
+
+
+if __name__ == "__main__":
     main()
