@@ -1,5 +1,6 @@
 """
-Fetch latest alerts from Home Front Command API and upsert into Supabase.
+Fetch latest alerts from Home Front Command API, upsert into Supabase,
+and upload a full snapshot JSON to Supabase Storage for fast frontend loads.
 
 Required env vars:
     SUPABASE_URL         https://xxx.supabase.co
@@ -22,6 +23,9 @@ except ImportError:
 OREF_URL = "https://www.oref.org.il/WarningMessages/alert/History/AlertsHistory.json"
 SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+STORAGE_BUCKET = "snapshots"
+STORAGE_FILE = "alerts_history.json"
+PAGE_SIZE = 10_000
 
 
 def fetch_oref() -> list[dict]:
@@ -35,19 +39,15 @@ def fetch_oref() -> list[dict]:
             "-H", "Origin: https://www.oref.org.il",
             OREF_URL,
         ],
-        capture_output=True,
-        text=True,
-        check=False,
+        capture_output=True, text=True, check=False,
     )
     if res.returncode != 0:
         print(f"curl failed: {res.stderr}", file=sys.stderr)
         raise SystemExit(1)
-
     payload = res.stdout.lstrip("﻿").strip()
     if not payload:
         print("Empty response from oref API", file=sys.stderr)
         raise SystemExit(1)
-
     data = json.loads(payload)
     if not isinstance(data, list):
         print(f"Expected list, got {type(data).__name__}", file=sys.stderr)
@@ -96,20 +96,75 @@ def upsert(client: httpx.Client, rows: list[dict]) -> None:
     resp.raise_for_status()
 
 
+def fetch_all_from_db(client: httpx.Client) -> list[dict]:
+    """Fetch every row from Supabase to build the storage snapshot."""
+    all_rows: list[dict] = []
+    offset = 0
+    print("  Fetching all rows from DB for snapshot...")
+    while True:
+        resp = client.get(
+            f"{SUPABASE_URL}/rest/v1/alerts",
+            headers={
+                "apikey": SUPABASE_KEY,
+                "Authorization": f"Bearer {SUPABASE_KEY}",
+                "Range-Unit": "items",
+                "Range": f"{offset}-{offset + PAGE_SIZE - 1}",
+                "Prefer": "count=exact",
+            },
+            params={"select": "alert_date,title,settlement,category", "order": "alert_date.desc"},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        batch = resp.json()
+        all_rows.extend(batch)
+
+        content_range = resp.headers.get("Content-Range", "")
+        total = int(content_range.split("/")[1]) if "/" in content_range else len(all_rows)
+
+        print(f"    {len(all_rows)}/{total}")
+        if len(all_rows) >= total or not batch:
+            break
+        offset += PAGE_SIZE
+
+    return all_rows
+
+
+def upload_snapshot(client: httpx.Client, rows: list[dict]) -> None:
+    """Upload the full dataset as a single JSON file to Supabase Storage."""
+    print(f"  Uploading snapshot ({len(rows)} rows) to storage...")
+    payload = json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    resp = client.post(
+        f"{SUPABASE_URL}/storage/v1/object/{STORAGE_BUCKET}/{STORAGE_FILE}",
+        headers={
+            "apikey": SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type": "application/json",
+            "x-upsert": "true",
+            "Cache-Control": "public, max-age=7200",
+        },
+        content=payload,
+        timeout=120,
+    )
+    resp.raise_for_status()
+    print(f"  Snapshot uploaded — {len(payload) / 1024 / 1024:.1f} MB")
+
+
 def main() -> None:
     print(f"[{datetime.now(timezone.utc).isoformat()}] Fetching from oref.org.il...")
     raw = fetch_oref()
     rows = [r for r in (to_row(x) for x in raw) if r]
     print(f"  {len(raw)} records fetched → {len(rows)} valid rows")
 
-    if not rows:
-        print("Nothing to upsert.")
-        return
-
     with httpx.Client() as client:
-        upsert(client, rows)
+        if rows:
+            upsert(client, rows)
+            print(f"  Upserted {len(rows)} rows into Supabase.")
 
-    print(f"  Upserted {len(rows)} rows into Supabase.")
+        all_rows = fetch_all_from_db(client)
+        upload_snapshot(client, all_rows)
+
+    print("Done.")
 
 
 if __name__ == "__main__":

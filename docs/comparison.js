@@ -312,7 +312,7 @@ function loadAndRender() {
   renderGeneralStats(stats);
 }
 
-const PAGE_SIZE = 1000;
+const PAGE_SIZE = 10000;
 
 async function fetchPage(from, to) {
   const url = `${SUPABASE_URL}/rest/v1/alerts?select=alert_date,title,settlement,category&order=alert_date.desc`;
@@ -332,6 +332,19 @@ async function fetchPage(from, to) {
 }
 
 async function loadAllAlerts(onProgress) {
+  // Try Storage snapshot first (single request, fast)
+  try {
+    const resp = await fetch(STORAGE_SNAPSHOT_URL + "?t=" + Math.floor(Date.now() / 7200000));
+    if (resp.ok) {
+      const rows = await resp.json();
+      onProgress(95, rows.length);
+      return rows;
+    }
+  } catch (e) {
+    console.warn("Storage snapshot unavailable, falling back to API:", e.message);
+  }
+
+  // Fallback: paginated API
   const { rows: firstPage, total } = await fetchPage(0, PAGE_SIZE - 1);
   if (total === 0) return firstPage;
   onProgress(10, total);

@@ -1282,16 +1282,23 @@ function runDashboard() {
 }
 
 // ---------------------------------------------------------------------------
-// Supabase data loader — fetches all alerts in parallel pages
+// Supabase data loader — tries Storage snapshot first, falls back to API
 // ---------------------------------------------------------------------------
 
-const PAGE_SIZE = 1000; // Supabase default max; raise in Settings > API if desired
+const PAGE_SIZE = 10000;
 
 function setProgress(pct, text) {
   const bar = document.getElementById("loadingBar");
   const txt = document.getElementById("loadingText");
   if (bar) bar.style.width = `${pct}%`;
   if (txt) txt.textContent = text;
+}
+
+async function loadFromStorage() {
+  // Single request — fast when the snapshot exists
+  const resp = await fetch(STORAGE_SNAPSHOT_URL + "?t=" + Math.floor(Date.now() / 7200000));
+  if (!resp.ok) throw new Error(`Storage ${resp.status}`);
+  return resp.json();
 }
 
 async function fetchPage(from, to) {
@@ -1306,27 +1313,21 @@ async function fetchPage(from, to) {
     },
   });
   if (!resp.ok) throw new Error(`Supabase error ${resp.status}: ${await resp.text()}`);
-
   const contentRange = resp.headers.get("Content-Range") || "";
   const total = parseInt(contentRange.split("/")[1] || "0", 10);
-  const rows = await resp.json();
-  return { rows, total };
+  return { rows: await resp.json(), total };
 }
 
-async function loadAllAlerts() {
+async function loadFromApi() {
   setProgress(5, "מחשב כמות רשומות…");
-
-  // First request: get total count + first page
   const { rows: firstPage, total } = await fetchPage(0, PAGE_SIZE - 1);
   if (total === 0) return firstPage;
-
   setProgress(10, `נמצאו ${total.toLocaleString("he-IL")} רשומות — טוען…`);
 
   const pageCount = Math.ceil(total / PAGE_SIZE);
   const allRows = new Array(pageCount);
   allRows[0] = firstPage;
 
-  // Fetch remaining pages in parallel batches of 20
   const CONCURRENCY = 20;
   for (let p = 1; p < pageCount; p += CONCURRENCY) {
     const batch = [];
@@ -1334,11 +1335,22 @@ async function loadAllAlerts() {
       batch.push(fetchPage(i * PAGE_SIZE, (i + 1) * PAGE_SIZE - 1).then(r => { allRows[i] = r.rows; }));
     }
     await Promise.all(batch);
-    const pct = 10 + Math.round((Math.min(p + CONCURRENCY, pageCount) / pageCount) * 85);
-    setProgress(pct, `טוען… ${Math.min(p + CONCURRENCY, pageCount) * PAGE_SIZE > total ? total : (p + CONCURRENCY) * PAGE_SIZE} / ${total.toLocaleString("he-IL")}`);
+    const loaded = Math.min((p + CONCURRENCY) * PAGE_SIZE, total);
+    setProgress(10 + Math.round((loaded / total) * 85), `טוען… ${loaded.toLocaleString("he-IL")} / ${total.toLocaleString("he-IL")}`);
   }
-
   return allRows.flat();
+}
+
+async function loadAllAlerts() {
+  try {
+    setProgress(10, "טוען snapshot…");
+    const rows = await loadFromStorage();
+    setProgress(95, "");
+    return rows;
+  } catch (e) {
+    console.warn("Storage snapshot unavailable, falling back to API:", e.message);
+    return loadFromApi();
+  }
 }
 
 function supabaseRowToRaw(r) {
