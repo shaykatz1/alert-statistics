@@ -58,20 +58,22 @@
       <div id="mainContent" style="display: none;">
         <div class="metrics">
           <div class="metric"><div class="label">סה"כ ישובים</div><div class="value" id="totalSettlements">-</div></div>
-          <div class="metric"><div class="label">ממוצע שיגורים ליישוב</div><div class="value" id="avgLaunches">-</div></div>
-          <div class="metric"><div class="label">חציון שיגורים</div><div class="value" id="medianLaunches">-</div></div>
+          <div class="metric"><div class="label">ממוצע התראות ליישוב</div><div class="value" id="avgLaunches">-</div></div>
+          <div class="metric"><div class="label">חציון התראות</div><div class="value" id="medianLaunches">-</div></div>
         </div>
 
-      <!-- Top 10 מובילים בשיגורים -->
+      <p style="color: #666; font-size: 13px; margin-top: 16px;">* התראות = שיגורים + חדירת כלי טיס</p>
+
+      <!-- Top 10 מובילים בהתראות -->
       <div class="card" style="margin-top: 24px; border: 2px solid #d32f2f;">
-        <h2 style="margin-top:0; color: #d32f2f;">🔴 ישובים עם הכי הרבה שיגורים</h2>
+        <h2 style="margin-top:0; color: #d32f2f;">🔴 ישובים עם הכי הרבה התראות</h2>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>#</th>
                 <th>יישוב/ים</th>
-                <th>שיגורים</th>
+                <th>התראות</th>
                 <th>זמן במרחב מוגן</th>
                 <th>ממוצע לשהייה</th>
               </tr>
@@ -86,17 +88,17 @@
         </div>
       </div>
 
-      <!-- Bottom 10 נמוכים בשיגורים -->
+      <!-- Bottom 10 נמוכים בהתראות -->
       <div class="card" style="margin-top: 24px; border: 2px solid #4caf50;">
-        <h2 style="margin-top:0; color: #4caf50;">🟢 ישובים עם הכי פחות שיגורים</h2>
-        <p style="color: #666; font-size: 14px;">(מציג רק ישובים שהיו להם לפחות שיגור אחד)</p>
+        <h2 style="margin-top:0; color: #4caf50;">🟢 ישובים עם הכי פחות התראות</h2>
+        <p style="color: #666; font-size: 14px;">(מציג רק ישובים שהיו להם לפחות התרעה אחת)</p>
         <div class="table-wrap">
           <table>
             <thead>
               <tr>
                 <th>#</th>
                 <th>יישוב/ים</th>
-                <th>שיגורים</th>
+                <th>התראות</th>
                 <th>זמן במרחב מוגן</th>
                 <th>ממוצע לשהייה</th>
               </tr>
@@ -121,7 +123,7 @@
                 <th>#</th>
                 <th>יישוב/ים</th>
                 <th>זמן במרחב מוגן</th>
-                <th>שיגורים</th>
+                <th>התראות</th>
                 <th>מס' שהיות</th>
                 <th>ממוצע לשהייה</th>
               </tr>
@@ -147,7 +149,7 @@
                 <th>#</th>
                 <th>יישוב/ים</th>
                 <th>זמן במרחב מוגן</th>
-                <th>שיגורים</th>
+                <th>התראות</th>
                 <th>מס' שהיות</th>
                 <th>ממוצע לשהייה</th>
               </tr>

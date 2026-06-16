@@ -25,26 +25,24 @@ function classifyAlert(title, category) {
 
 function calculateShelterPeriods(events) {
   const periods = [];
-  let openAt = null;
+  let shelterStart = null;
 
   for (const evt of events) {
-    if (evt.alert_type === "shelter_enter" && !openAt) {
-      openAt = evt.alert_dt;
-    } else if (evt.alert_type === "shelter_exit" && openAt) {
-      const duration = (evt.alert_dt - openAt) / 1000 / 60;
+    if ((evt.alert_type === "launch" || evt.alert_type === "aircraft") && shelterStart === null) {
+      shelterStart = evt.alert_dt;
+    } else if (evt.alert_type === "shelter_exit" && shelterStart !== null) {
+      const duration = (evt.alert_dt - shelterStart) / 1000 / 60;
       if (duration > 0) {
-        periods.push({ start: openAt, end: evt.alert_dt, duration });
+        periods.push({ start: shelterStart, end: evt.alert_dt, duration });
       }
-      openAt = null;
+      shelterStart = null;
     }
   }
 
-  if (openAt) {
-    const now = new Date();
-    const duration = (now - openAt) / 1000 / 60;
-    if (duration > 0) {
-      periods.push({ start: openAt, end: now, duration });
-    }
+  // No shelter_exit received: count 10 minutes from the threat
+  if (shelterStart !== null) {
+    const end = new Date(shelterStart.getTime() + 10 * 60 * 1000);
+    periods.push({ start: shelterStart, end, duration: 10 });
   }
 
   return periods;
@@ -105,18 +103,18 @@ function renderTable(tbody, groupedData, columns) {
 }
 
 function renderTopLaunches(data, limit = 10) {
-  const sorted = data.sort((a, b) => b.launches - a.launches);
-  fullTopLaunches = groupByValue(sorted, 'launches').sort((a, b) => b.value - a.value);
-  
+  const sorted = data.sort((a, b) => b.alerts - a.alerts);
+  fullTopLaunches = groupByValue(sorted, 'alerts').sort((a, b) => b.value - a.value);
+
   const toShow = fullTopLaunches.slice(0, limit);
   const tbody = $("topLaunchesTable");
-  
+
   renderTable(tbody, toShow, [
-    { format: (item) => item.launches.toLocaleString() },
+    { format: (item) => item.alerts.toLocaleString() },
     { format: (item) => formatMinutesToHHMM(item.shelterMinutes) },
     { format: (item) => item.avgStayMinutes > 0 ? item.avgStayMinutes.toFixed(1) + " דק'" : "-" }
   ]);
-  
+
   const expandBtn = $("topLaunchesExpand");
   if (expandBtn) {
     expandBtn.style.display = fullTopLaunches.length > limit ? "block" : "none";
@@ -124,19 +122,19 @@ function renderTopLaunches(data, limit = 10) {
 }
 
 function renderBottomLaunches(data, limit = 10) {
-  const withLaunches = data.filter(d => d.launches > 0);
-  const sorted = withLaunches.sort((a, b) => a.launches - b.launches);
-  fullBottomLaunches = groupByValue(sorted, 'launches').sort((a, b) => a.value - b.value);
-  
+  const withAlerts = data.filter(d => d.alerts > 0);
+  const sorted = withAlerts.sort((a, b) => a.alerts - b.alerts);
+  fullBottomLaunches = groupByValue(sorted, 'alerts').sort((a, b) => a.value - b.value);
+
   const toShow = fullBottomLaunches.slice(0, limit);
   const tbody = $("bottomLaunchesTable");
-  
+
   renderTable(tbody, toShow, [
-    { format: (item) => item.launches.toLocaleString() },
+    { format: (item) => item.alerts.toLocaleString() },
     { format: (item) => formatMinutesToHHMM(item.shelterMinutes) },
     { format: (item) => item.avgStayMinutes > 0 ? item.avgStayMinutes.toFixed(1) + " דק'" : "-" }
   ]);
-  
+
   const expandBtn = $("bottomLaunchesExpand");
   if (expandBtn) {
     expandBtn.style.display = fullBottomLaunches.length > limit ? "block" : "none";
@@ -153,11 +151,11 @@ function renderTopShelter(data, limit = 10) {
   
   renderTable(tbody, toShow, [
     { format: (item) => formatMinutesToHHMM(item.shelterMinutes) },
-    { format: (item) => item.launches.toLocaleString() },
+    { format: (item) => item.alerts.toLocaleString() },
     { format: (item) => item.stayCount.toLocaleString() },
     { format: (item) => item.avgStayMinutes > 0 ? item.avgStayMinutes.toFixed(1) + " דק'" : "-" }
   ]);
-  
+
   const expandBtn = $("topShelterExpand");
   if (expandBtn) {
     expandBtn.style.display = fullTopShelter.length > limit ? "block" : "none";
@@ -168,13 +166,13 @@ function renderBottomShelter(data, limit = 10) {
   const withShelter = data.filter(d => d.shelterMinutes > 0);
   const sorted = withShelter.sort((a, b) => a.shelterMinutes - b.shelterMinutes);
   fullBottomShelter = groupByValue(sorted, 'shelterMinutes').sort((a, b) => a.value - b.value);
-  
+
   const toShow = fullBottomShelter.slice(0, limit);
   const tbody = $("bottomShelterTable");
-  
+
   renderTable(tbody, toShow, [
     { format: (item) => formatMinutesToHHMM(item.shelterMinutes) },
-    { format: (item) => item.launches.toLocaleString() },
+    { format: (item) => item.alerts.toLocaleString() },
     { format: (item) => item.stayCount.toLocaleString() },
     { format: (item) => item.avgStayMinutes > 0 ? item.avgStayMinutes.toFixed(1) + " דק'" : "-" }
   ]);
@@ -212,7 +210,7 @@ function processData(filtered) {
     if (!settlementStats[row.settlement]) {
       settlementStats[row.settlement] = {
         settlement: row.settlement,
-        launches: 0,
+        alerts: 0,
         events: []
       };
     }
@@ -220,22 +218,22 @@ function processData(filtered) {
     const stats = settlementStats[row.settlement];
     stats.events.push(row);
 
-    if (row.alert_type === "launch") {
-      stats.launches++;
+    if (row.alert_type === "launch" || row.alert_type === "aircraft") {
+      stats.alerts++;
     }
   });
 
   const results = [];
   for (const [settlement, stats] of Object.entries(settlementStats)) {
     stats.events.sort((a, b) => a.alert_dt - b.alert_dt);
-    
+
     const periods = calculateShelterPeriods(stats.events);
     const totalShelterMinutes = periods.reduce((sum, p) => sum + p.duration, 0);
     const avgStayMinutes = periods.length > 0 ? totalShelterMinutes / periods.length : 0;
 
     results.push({
       settlement,
-      launches: stats.launches,
+      alerts: stats.alerts,
       shelterMinutes: totalShelterMinutes,
       stayCount: periods.length,
       avgStayMinutes,
@@ -283,16 +281,16 @@ function filterData() {
 }
 
 function renderGeneralStats(data) {
-  const launches = data.map(d => d.launches);
+  const alerts = data.map(d => d.alerts);
   const totalSettlements = data.length;
-  const totalLaunches = launches.reduce((sum, v) => sum + v, 0);
-  const avgLaunches = totalSettlements > 0 ? totalLaunches / totalSettlements : 0;
-  
-  const sortedLaunches = [...launches].sort((a, b) => a - b);
-  const median = sortedLaunches[Math.floor(sortedLaunches.length / 2)] || 0;
+  const totalAlerts = alerts.reduce((sum, v) => sum + v, 0);
+  const avgAlerts = totalSettlements > 0 ? totalAlerts / totalSettlements : 0;
+
+  const sortedAlerts = [...alerts].sort((a, b) => a - b);
+  const median = sortedAlerts[Math.floor(sortedAlerts.length / 2)] || 0;
 
   $("totalSettlements").textContent = totalSettlements.toLocaleString();
-  $("avgLaunches").textContent = avgLaunches.toFixed(1);
+  $("avgLaunches").textContent = avgAlerts.toFixed(1);
   $("medianLaunches").textContent = median.toFixed(0);
 }
 

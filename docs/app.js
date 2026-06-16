@@ -356,137 +356,44 @@ function applyRangeFilter(rows) {
 function extractShelterStays(rows, rangeStart, rangeEnd) {
   const now = new Date();
   const effectiveEnd = rangeEnd || now;
-  const data = rows
-    .filter((r) => r.alert_type === "shelter_enter" || r.alert_type === "shelter_exit")
-    .sort((a, b) => a.alert_dt - b.alert_dt);
 
   const bySettlement = new Map();
-  data.forEach((r) => {
-    if (!bySettlement.has(r.settlement)) bySettlement.set(r.settlement, []);
-    bySettlement.get(r.settlement).push(r);
-  });
+  rows
+    .filter((r) => r.alert_type === "launch" || r.alert_type === "aircraft" || r.alert_type === "shelter_exit")
+    .sort((a, b) => a.alert_dt - b.alert_dt)
+    .forEach((r) => {
+      if (!bySettlement.has(r.settlement)) bySettlement.set(r.settlement, []);
+      bySettlement.get(r.settlement).push(r);
+    });
 
   const stays = [];
-  for (const [settlement, arr] of bySettlement.entries()) {
-    let openAt = null;
-    for (const row of arr) {
-      if (row.alert_type === "shelter_enter") {
-        if (!openAt) openAt = row.alert_dt;
-        continue;
-      }
-      if (row.alert_type === "shelter_exit" && openAt) {
-        let start = openAt;
-        let end = row.alert_dt;
+  for (const [settlement, events] of bySettlement.entries()) {
+    let shelterStart = null;
+
+    for (const evt of events) {
+      if ((evt.alert_type === "launch" || evt.alert_type === "aircraft") && shelterStart === null) {
+        shelterStart = evt.alert_dt;
+      } else if (evt.alert_type === "shelter_exit" && shelterStart !== null) {
+        let start = shelterStart;
+        let end = evt.alert_dt;
         if (rangeStart) start = start > rangeStart ? start : rangeStart;
         if (rangeEnd) end = end < rangeEnd ? end : rangeEnd;
         if (end > start) stays.push({ settlement, start_dt: start, end_dt: end, duration_minutes: (end - start) / 60000 });
-        openAt = null;
+        shelterStart = null;
       }
     }
 
-    if (openAt) {
-      let start = openAt;
-      let end = effectiveEnd;
+    // No shelter_exit received: count 10 minutes from the threat
+    if (shelterStart !== null) {
+      let start = shelterStart;
+      let end = new Date(shelterStart.getTime() + 10 * 60 * 1000);
       if (rangeStart) start = start > rangeStart ? start : rangeStart;
+      end = end < effectiveEnd ? end : effectiveEnd;
       if (rangeEnd) end = end < rangeEnd ? end : rangeEnd;
       if (end > start) stays.push({ settlement, start_dt: start, end_dt: end, duration_minutes: (end - start) / 60000 });
     }
   }
 
-  return stays;
-}
-
-function extractLaunchesWithoutWarningStays(rows, rangeStart, rangeEnd) {
-  // Calculate shelter time for launches without advance warning
-  // Logic: Start counting from launch time, end after 10 minutes OR at next launch (whichever comes first)
-  // Last launch always counts full 10 minutes
-  
-  const bySettlement = {};
-  
-  // Group by settlement
-  rows.forEach((r) => {
-    if (!bySettlement[r.settlement]) {
-      bySettlement[r.settlement] = [];
-    }
-    bySettlement[r.settlement].push(r);
-  });
-  
-  const stays = [];
-  
-  Object.keys(bySettlement).forEach((settlement) => {
-    const events = bySettlement[settlement].sort((a, b) => a.alert_dt - b.alert_dt);
-    
-    let inShelter = false;
-    let shelterStart = null;
-    let lastLaunchTime = null;
-    const launchesWithoutWarning = [];
-    
-    events.forEach((event) => {
-      const cat = event.category;
-      
-      // Track shelter windows
-      if (cat === 14 && !inShelter) {
-        inShelter = true;
-        shelterStart = event.alert_dt;
-      } else if (cat === 13 && inShelter) {
-        inShelter = false;
-        shelterStart = null;
-      }
-      
-      // Track launches
-      if (cat === 1) {
-        const currentLaunchTime = event.alert_dt;
-        
-        if (!inShelter) {
-          // Launch without advance warning (outside shelter window)
-          // Only count if 10+ minutes passed since last launch (new event)
-          if (lastLaunchTime === null) {
-            launchesWithoutWarning.push(currentLaunchTime);
-            lastLaunchTime = currentLaunchTime;
-          } else {
-            const timeSinceLast = (currentLaunchTime.getTime() - lastLaunchTime.getTime()) / 1000;
-            if (timeSinceLast >= 600) {  // 10 minutes
-              launchesWithoutWarning.push(currentLaunchTime);
-            }
-            lastLaunchTime = currentLaunchTime;
-          }
-        } else {
-          lastLaunchTime = currentLaunchTime;
-        }
-      }
-    });
-    
-    // Now calculate shelter durations for launches without warning
-    for (let i = 0; i < launchesWithoutWarning.length; i++) {
-      const launchTime = launchesWithoutWarning[i];
-      let endTime;
-      
-      if (i < launchesWithoutWarning.length - 1) {
-        // Not the last launch - end at next launch or 10 minutes, whichever comes first
-        const nextLaunchTime = launchesWithoutWarning[i + 1];
-        const tenMinutesLater = new Date(launchTime.getTime() + 10 * 60 * 1000);
-        endTime = nextLaunchTime < tenMinutesLater ? nextLaunchTime : tenMinutesLater;
-      } else {
-        // Last launch - always 10 minutes
-        endTime = new Date(launchTime.getTime() + 10 * 60 * 1000);
-      }
-      
-      let start = launchTime;
-      let end = endTime;
-      if (rangeStart) start = start > rangeStart ? start : rangeStart;
-      if (rangeEnd) end = end < rangeEnd ? end : rangeEnd;
-      
-      if (end > start) {
-        stays.push({
-          settlement,
-          start_dt: start,
-          end_dt: end,
-          duration_minutes: (end - start) / 60000
-        });
-      }
-    }
-  });
-  
   return stays;
 }
 
@@ -859,6 +766,23 @@ function dailyLaunchCounts(rows) {
   return dates.map((date) => ({ date, count: map.get(date) || 0 }));
 }
 
+function dailyAircraftCounts(rows) {
+  const map = new Map();
+  const seen = new Set();
+
+  rows.filter((r) => r.alert_type === "aircraft").forEach((r) => {
+    const k = r.event_key;
+    if (seen.has(k)) return;
+    seen.add(k);
+
+    const date = r.date;
+    map.set(date, (map.get(date) || 0) + 1);
+  });
+
+  const dates = Array.from(map.keys()).sort();
+  return dates.map((date) => ({ date, count: map.get(date) || 0 }));
+}
+
 function dailyShelterMinutes(stays) {
   const map = new Map();
   
@@ -884,24 +808,21 @@ function dailyShelterMinutes(stays) {
   return dates.map((date) => ({ date, minutes: Math.round(map.get(date) || 0) }));
 }
 
-function drawTrendChart(id, launchData, shelterData) {
-  // Merge dates from both datasets
-  const allDates = new Set([...launchData.map(d => d.date), ...shelterData.map(d => d.date)]);
+function drawTrendChart(id, launchData, aircraftData) {
+  const allDates = new Set([...launchData.map(d => d.date), ...aircraftData.map(d => d.date)]);
   const sortedDates = Array.from(allDates).sort();
-  
-  // Build data arrays aligned by date
+
   const launchMap = new Map(launchData.map(d => [d.date, d.count]));
-  const shelterMap = new Map(shelterData.map(d => [d.date, d.minutes]));
-  
+  const aircraftMap = new Map(aircraftData.map(d => [d.date, d.count]));
+
   const launchCounts = sortedDates.map(date => launchMap.get(date) || 0);
-  const shelterMinutes = sortedDates.map(date => shelterMap.get(date) || 0);
-  
-  // Format dates for display (show day/month)
+  const aircraftCounts = sortedDates.map(date => aircraftMap.get(date) || 0);
+
   const labels = sortedDates.map(date => {
     const d = new Date(date + 'T00:00:00');
     return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
-  
+
   return new Chart($(id), {
     type: 'line',
     data: {
@@ -912,16 +833,14 @@ function drawTrendChart(id, launchData, shelterData) {
           data: launchCounts,
           borderColor: '#e74c3c',
           backgroundColor: 'rgba(231, 76, 60, 0.1)',
-          yAxisID: 'y',
           tension: 0.3,
           fill: true
         },
         {
-          label: 'זמן במרחב מוגן (דקות)',
-          data: shelterMinutes,
-          borderColor: '#3498db',
-          backgroundColor: 'rgba(52, 152, 219, 0.1)',
-          yAxisID: 'y1',
+          label: 'כלי טיס',
+          data: aircraftCounts,
+          borderColor: '#20639b',
+          backgroundColor: 'rgba(32, 99, 155, 0.1)',
           tension: 0.3,
           fill: true
         }
@@ -938,18 +857,6 @@ function drawTrendChart(id, launchData, shelterData) {
         legend: {
           display: true,
           position: 'top'
-        },
-        tooltip: {
-          callbacks: {
-            label: function(context) {
-              let label = context.dataset.label || '';
-              if (label) {
-                label += ': ';
-              }
-              label += context.parsed.y;
-              return label;
-            }
-          }
         }
       },
       scales: {
@@ -959,22 +866,9 @@ function drawTrendChart(id, launchData, shelterData) {
           position: 'right',
           title: {
             display: true,
-            text: 'שיגורים'
+            text: 'מספר אירועים'
           },
           beginAtZero: true
-        },
-        y1: {
-          type: 'linear',
-          display: true,
-          position: 'left',
-          title: {
-            display: true,
-            text: 'דקות במרחב מוגן'
-          },
-          beginAtZero: true,
-          grid: {
-            drawOnChartArea: false
-          }
         }
       }
     }
@@ -1119,9 +1013,7 @@ function runDashboard() {
     }
 
     const { rows: baseFiltered, rangeStart, rangeEnd } = applyRangeFilter(prepared);
-    const regularStays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
-    const launchWithoutWarningStays = extractLaunchesWithoutWarningStays(baseFiltered, rangeStart, rangeEnd);
-    const stays = [...regularStays, ...launchWithoutWarningStays];
+    const stays = extractShelterStays(baseFiltered, rangeStart, rangeEnd);
     const shelterSummary = summarizeShelter(stays);
 
     let afterDuration = baseFiltered;
@@ -1191,8 +1083,8 @@ function runDashboard() {
 
     // Daily trend chart
     const dailyLaunches = dailyLaunchCounts(afterDuration);
-    const dailyShelter = dailyShelterMinutes(staysAfterDuration);
-    trendChart = drawTrendChart("trendChart", dailyLaunches, dailyShelter);
+    const dailyAircraft = dailyAircraftCounts(afterDuration);
+    trendChart = drawTrendChart("trendChart", dailyLaunches, dailyAircraft);
 
     compareTwoLaunchTotalsChart = drawBar("compareTwoLaunchTotalsChart", launchTotals.map((x) => x.settlement), launchTotals.map((x) => x.count), "כמות שיגורים כוללת", "#0f8b4c");
     compareTwoShelterTotalsChart = drawBar("compareTwoShelterTotalsChart", shelterTotals.map((x) => x.settlement), shelterTotals.map((x) => x.minutes), "זמן שהיה כולל (דקות)", "#20639b");
